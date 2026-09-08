@@ -146,6 +146,99 @@ const huf = (v?: number) => {
   }
 };
 
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 11) return "Jó reggelt";
+  if (hour < 18) return "Szép napot";
+  return "Jó estét";
+}
+
+function getToneStyles(tone: "critical" | "warn" | "ok" | "info") {
+  if (tone === "critical") {
+    return {
+      bg: "rgba(244,63,94,0.16)",
+      border: "rgba(244,63,94,0.24)",
+      color: "#fb7185",
+    };
+  }
+  if (tone === "warn") {
+    return {
+      bg: "rgba(245,158,11,0.16)",
+      border: "rgba(245,158,11,0.24)",
+      color: "#fbbf24",
+    };
+  }
+  if (tone === "info") {
+    return {
+      bg: "rgba(59,130,246,0.16)",
+      border: "rgba(59,130,246,0.24)",
+      color: "#93c5fd",
+    };
+  }
+  return {
+    bg: "rgba(16,185,129,0.16)",
+    border: "rgba(16,185,129,0.24)",
+    color: "#34d399",
+  };
+}
+
+function getVehiclePriority(vehicle: Vehicle, upcomingDays: number | null | undefined, recordCount: number) {
+  if (vehicle.condition === "not_working") {
+    return {
+      score: 120,
+      tone: "critical" as const,
+      label: "Azonnali figyelem",
+      detail: "A jarmu jelenleg nem mukodik.",
+    };
+  }
+  if (upcomingDays != null && upcomingDays < 0) {
+    return {
+      score: 112,
+      tone: "critical" as const,
+      label: "Lejart ellenorzes",
+      detail: `${-upcomingDays} napja lejart kovetkezo ellenorzes.`,
+    };
+  }
+  if (upcomingDays != null && upcomingDays <= 7) {
+    return {
+      score: 96,
+      tone: "warn" as const,
+      label: "Hamarosan esedekes",
+      detail: `${upcomingDays} napon belul kovetkezo ellenorzes.`,
+    };
+  }
+  if (recordCount === 0) {
+    return {
+      score: 72,
+      tone: "info" as const,
+      label: "Hianyos elozmeny",
+      detail: "Ehhez a jarmuhoz meg nincs szerviznaplo.",
+    };
+  }
+  if (vehicle.condition === "debrecen_only") {
+    return {
+      score: 48,
+      tone: "warn" as const,
+      label: "Korlatozott hasznalat",
+      detail: "Debrecen belso hasznalatra korlatozott.",
+    };
+  }
+  if (vehicle.status === "on_route") {
+    return {
+      score: 34,
+      tone: "ok" as const,
+      label: "Aktiv futasban",
+      detail: "A jarmu most utban van.",
+    };
+  }
+  return {
+    score: 12,
+    tone: "ok" as const,
+    label: "Rendben",
+    detail: "Jelenleg nincs surgos teendo.",
+  };
+}
+
 export default function GroupLeaderDashboardClient() {
   const router = useRouter();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -378,16 +471,86 @@ export default function GroupLeaderDashboardClient() {
     return map;
   }, [records]);
 
+  const vehicleCards = useMemo(() => {
+    return vehicles.map((vehicle) => {
+      const vehicleRecords = recordsByVehicle.get(vehicle._id) ?? [];
+      const upcoming = upcomingByVehicle.get(vehicle._id);
+      const lastRecord = lastServiceByVehicle.get(vehicle._id);
+      const priority = getVehiclePriority(vehicle, upcoming?.days, vehicleRecords.length);
+      return {
+        vehicle,
+        records: vehicleRecords,
+        upcoming,
+        lastRecord,
+        priority,
+      };
+    });
+  }, [vehicles, recordsByVehicle, upcomingByVehicle, lastServiceByVehicle]);
+
+  const fleetPulse = useMemo(() => {
+    const total = vehicleCards.length;
+    const availableNow = vehicleCards.filter(
+      ({ vehicle }) => vehicle.status === "parked" && vehicle.condition === "working"
+    ).length;
+    const urgentCount = vehicleCards.filter(({ priority }) => priority.score >= 90).length;
+    const needsHistory = vehicleCards.filter(({ records }) => records.length === 0).length;
+    const healthScore = total ? Math.round((stats.working / total) * 100) : 0;
+    const utilization = total ? Math.round((stats.onRoute / total) * 100) : 0;
+    return { total, availableNow, urgentCount, needsHistory, healthScore, utilization };
+  }, [vehicleCards, stats]);
+
+  const topPriorityVehicle = useMemo(() => {
+    return [...vehicleCards]
+      .sort((a, b) => b.priority.score - a.priority.score || a.vehicle.name.localeCompare(b.vehicle.name, "hu"))
+      .at(0) ?? null;
+  }, [vehicleCards]);
+
+  const servicePulse = useMemo(() => {
+    const deadlines = records
+      .map((record) => ({
+        record,
+        days: daysUntil(record.nextCheckDate),
+      }))
+      .filter((item) => item.days != null);
+
+    const overdue = deadlines.filter((item) => (item.days ?? 0) < 0).length;
+    const dueSoon = deadlines.filter((item) => (item.days ?? 9999) >= 0 && (item.days ?? 9999) <= 14).length;
+    const recent = records.filter((record) => {
+      const date = record.date ? new Date(record.date + "T00:00:00") : null;
+      if (!date) return false;
+      const diff = Date.now() - date.getTime();
+      return diff <= 1000 * 60 * 60 * 24 * 30;
+    }).length;
+    const totalCost = records.reduce((sum, record) => sum + (typeof record.costHUF === "number" ? record.costHUF : 0), 0);
+
+    const nextAlert =
+      [...deadlines].sort((a, b) => (a.days ?? 9999) - (b.days ?? 9999))[0] ?? null;
+
+    return { overdue, dueSoon, recent, totalCost, nextAlert };
+  }, [records]);
+
   // Tab specific data
   const filteredVehicles = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return vehicles.filter((v) => {
-      if (statusFilter !== "all" && v.status !== statusFilter) return false;
-      if (conditionFilter !== "all" && v.condition !== conditionFilter) return false;
-      if (!q) return true;
-      return [v.name, v.type, v.plates, v.color, v.note].filter(Boolean).join(" ").toLowerCase().includes(q);
-    });
-  }, [vehicles, search, statusFilter, conditionFilter]);
+    return vehicleCards
+      .filter(({ vehicle }) => {
+        if (statusFilter !== "all" && vehicle.status !== statusFilter) return false;
+        if (conditionFilter !== "all" && vehicle.condition !== conditionFilter) return false;
+        if (!q) return true;
+        return [vehicle.name, vehicle.type, vehicle.plates, vehicle.color, vehicle.note]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => {
+        if (b.priority.score !== a.priority.score) return b.priority.score - a.priority.score;
+        const aUpcoming = a.upcoming?.days ?? 9999;
+        const bUpcoming = b.upcoming?.days ?? 9999;
+        if (aUpcoming !== bUpcoming) return aUpcoming - bUpcoming;
+        return a.vehicle.name.localeCompare(b.vehicle.name, "hu");
+      });
+  }, [vehicleCards, search, statusFilter, conditionFilter]);
 
   const serviceFilteredRecords = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -411,7 +574,14 @@ export default function GroupLeaderDashboardClient() {
         return haystack.includes(q);
       });
     }
-    return list;
+    return list.sort((a, b) => {
+      const aDays = daysUntil(a.nextCheckDate);
+      const bDays = daysUntil(b.nextCheckDate);
+      const aScore = aDays == null ? 0 : aDays < 0 ? 3 : aDays <= 14 ? 2 : 1;
+      const bScore = bDays == null ? 0 : bDays < 0 ? 3 : bDays <= 14 ? 2 : 1;
+      if (bScore !== aScore) return bScore - aScore;
+      return (b.date ?? "").localeCompare(a.date ?? "");
+    });
   }, [records, search, tab]);
 
   // ====== RENDER ======
@@ -421,8 +591,11 @@ export default function GroupLeaderDashboardClient() {
     >
       {/* Premium Ambient Background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute inset-0 ambient-grid opacity-40" />
+        <div className="absolute inset-0 ambient-scan opacity-30" />
         <div className="absolute top-[-5%] right-[-10%] w-[380px] h-[380px] bg-[#C9A962]/[0.06] blur-[120px] rounded-full" />
         <div className="absolute bottom-[10%] left-[-15%] w-[400px] h-[400px] bg-[#1e3a8a]/[0.3] blur-[130px] rounded-full" />
+        <div className="absolute top-[22%] left-[12%] w-[180px] h-[180px] bg-[#C9A962]/[0.05] blur-[80px] rounded-full animate-pulse-glow" />
       </div>
 
       {/* Sticky Header */}
@@ -570,6 +743,86 @@ export default function GroupLeaderDashboardClient() {
       </header>
 
       <main className="relative z-10 w-full mx-auto px-4 mt-5">
+        <div className="space-y-3 mb-4">
+          <DashboardHero
+            tab={tab}
+            user={user}
+            fleetPulse={fleetPulse}
+            servicePulse={servicePulse}
+            topPriorityVehicle={topPriorityVehicle}
+            onPrimaryAction={() => {
+              if (tab === "vehicles") {
+                if (topPriorityVehicle) {
+                  setExpandedVehicleId(topPriorityVehicle.vehicle._id);
+                  setSearch(topPriorityVehicle.vehicle.name);
+                } else {
+                  setTab("service");
+                }
+                return;
+              }
+              openCreate(
+                vehicles[0]?._id ?? "",
+                tab === "oil" ? "oil" : tab === "tires" ? "tire" : "main"
+              );
+            }}
+            onSecondaryAction={() => {
+              if (tab === "vehicles") {
+                setTab("service");
+                return;
+              }
+              setTab("vehicles");
+            }}
+          />
+
+          {tab === "vehicles" ? (
+            <InsightRail
+              items={[
+                {
+                  label: "Szabadon bevetheto",
+                  value: `${fleetPulse.availableNow} auto`,
+                  tone: "ok",
+                  icon: ShieldCheck,
+                },
+                {
+                  label: "Azonnali figyelem",
+                  value: fleetPulse.urgentCount ? `${fleetPulse.urgentCount} teendo` : "Nincs blokkolo",
+                  tone: fleetPulse.urgentCount ? "critical" : "ok",
+                  icon: AlertTriangle,
+                },
+                {
+                  label: "Hianyos naplo",
+                  value: fleetPulse.needsHistory ? `${fleetPulse.needsHistory} jarmu` : "Mindenhol van adat",
+                  tone: fleetPulse.needsHistory ? "info" : "ok",
+                  icon: FileText,
+                },
+              ]}
+            />
+          ) : (
+            <InsightRail
+              items={[
+                {
+                  label: "Lejart kovetes",
+                  value: servicePulse.overdue ? `${servicePulse.overdue} rekord` : "Nincs lejart",
+                  tone: servicePulse.overdue ? "critical" : "ok",
+                  icon: Clock,
+                },
+                {
+                  label: "14 napon belul",
+                  value: servicePulse.dueSoon ? `${servicePulse.dueSoon} esedekes` : "Nincs rovid hatarido",
+                  tone: servicePulse.dueSoon ? "warn" : "ok",
+                  icon: Sparkles,
+                },
+                {
+                  label: "30 nap aktivitasa",
+                  value: `${servicePulse.recent} rekord`,
+                  tone: "info",
+                  icon: Activity,
+                },
+              ]}
+            />
+          )}
+        </div>
+
         {/* === VEHICLES TAB === */}
         {tab === "vehicles" && (
           <section className="space-y-4">
@@ -632,25 +885,24 @@ export default function GroupLeaderDashboardClient() {
               </div>
             ) : (
               <div className="space-y-3">
-                {filteredVehicles.map((v, idx) => {
-                  const expanded = expandedVehicleId === v._id;
-                  const vRecs = recordsByVehicle.get(v._id) ?? [];
-                  const upcoming = upcomingByVehicle.get(v._id);
-                  const lastRec = lastServiceByVehicle.get(v._id);
+                {filteredVehicles.map((card, idx) => {
+                  const { vehicle, records: vehicleRecords, upcoming, lastRecord, priority } = card;
+                  const expanded = expandedVehicleId === vehicle._id;
                   return (
                     <VehicleRow
-                      key={v._id}
+                      key={vehicle._id}
                       index={idx}
-                      vehicle={v}
+                      vehicle={vehicle}
                       expanded={expanded}
-                      records={vRecs}
+                      records={vehicleRecords}
                       upcoming={upcoming}
-                      lastRecord={lastRec}
-                      onToggle={() => setExpandedVehicleId(expanded ? null : v._id)}
-                      onPatch={(patch: any) => patchVehicle(v._id, patch)}
-                      onAddOil={() => openCreate(v._id, "oil")}
-                      onAddTire={() => openCreate(v._id, "tire")}
-                      onAddService={() => openCreate(v._id, "main")}
+                      lastRecord={lastRecord}
+                      priority={priority}
+                      onToggle={() => setExpandedVehicleId(expanded ? null : vehicle._id)}
+                      onPatch={(patch: any) => patchVehicle(vehicle._id, patch)}
+                      onAddOil={() => openCreate(vehicle._id, "oil")}
+                      onAddTire={() => openCreate(vehicle._id, "tire")}
+                      onAddService={() => openCreate(vehicle._id, "main")}
                       onEditRecord={openEdit}
                       onDeleteRecord={(rid: any) => setDeletingRecordId(rid)}
                     />
@@ -890,6 +1142,145 @@ function FilterTab({ active, onClick, children, dot }: any) {
   );
 }
 
+function DashboardHero({
+  tab,
+  user,
+  fleetPulse,
+  servicePulse,
+  topPriorityVehicle,
+  onPrimaryAction,
+  onSecondaryAction,
+}: any) {
+  const firstName = user?.name?.split(" ")?.[0] || "Csoportvezető";
+  const isVehicleTab = tab === "vehicles";
+  const heading = isVehicleTab ? `${getGreeting()}, ${firstName}` : "Szerviz kozpont";
+  const subline = isVehicleTab
+    ? topPriorityVehicle
+      ? `${topPriorityVehicle.vehicle.name} most a legfontosabb fokusz. ${topPriorityVehicle.priority.detail}`
+      : "A flottat itt latod a legfontosabb prioritasokkal es gyors muveletekkel."
+    : servicePulse.nextAlert
+    ? `${servicePulse.nextAlert.record.vehicleName || "Egy jarmu"} kovetkezo ellenorzese all a legkozelebb.`
+    : "Itt latod a hataridos rekordokat, koltsegeket es a gyors rogzitest.";
+
+  return (
+    <section className="relative overflow-hidden rounded-[28px] border border-[#C9A962]/14 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.75)]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(201,169,98,0.18),transparent_32%),linear-gradient(160deg,rgba(15,35,56,0.98),rgba(11,26,42,0.96))]" />
+      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.02)_18%,transparent_36%)]" />
+      <div className="relative px-4 py-4.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-[#C9A962]/15 bg-[#C9A962]/[0.06] text-[#C9A962] text-[10px] font-black uppercase tracking-[0.18em]">
+              <Sparkles className="w-3.5 h-3.5" strokeWidth={2.4} />
+              {isVehicleTab ? "Flotta fokusz" : "Szerviz fokusz"}
+            </div>
+            <h2 className="mt-3 text-[22px] leading-[1.05] font-[family-name:var(--font-serif)] font-bold tracking-tight text-[#F7F5F1]">
+              {heading}
+            </h2>
+            <p className="mt-2 text-[12.5px] leading-relaxed font-medium text-[#F7F5F1]/62 max-w-[28rem]">
+              {subline}
+            </p>
+          </div>
+
+          <div className="w-14 h-14 shrink-0 rounded-[22px] flex items-center justify-center border border-[#C9A962]/18 bg-[#C9A962]/10 shadow-[0_12px_34px_-14px_rgba(201,169,98,0.5)]">
+            {isVehicleTab ? (
+              <CarFront className="w-7 h-7 text-[#C9A962]" strokeWidth={2.2} />
+            ) : (
+              <Wrench className="w-7 h-7 text-[#C9A962]" strokeWidth={2.2} />
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2.5">
+          <HeroMetric
+            label={isVehicleTab ? "Flotta allapot" : "Lejart kontroll"}
+            value={isVehicleTab ? `${fleetPulse.healthScore}%` : String(servicePulse.overdue)}
+            tone={isVehicleTab ? "ok" : servicePulse.overdue ? "critical" : "ok"}
+            icon={isVehicleTab ? ShieldCheck : Clock}
+          />
+          <HeroMetric
+            label={isVehicleTab ? "Kihasznaltsag" : "14 napon belul"}
+            value={isVehicleTab ? `${fleetPulse.utilization}%` : String(servicePulse.dueSoon)}
+            tone={isVehicleTab ? "info" : servicePulse.dueSoon ? "warn" : "ok"}
+            icon={Activity}
+          />
+          <HeroMetric
+            label={isVehicleTab ? "Nyitott fokusz" : "Koltes"}
+            value={isVehicleTab ? String(fleetPulse.urgentCount) : huf(servicePulse.totalCost) || "0 Ft"}
+            tone={isVehicleTab ? (fleetPulse.urgentCount ? "critical" : "ok") : "info"}
+            icon={isVehicleTab ? AlertTriangle : FileText}
+          />
+        </div>
+
+        <div className="mt-4 flex items-center gap-2.5">
+          <button
+            onClick={onPrimaryAction}
+            className="flex-1 h-12 rounded-2xl px-4 text-[11px] font-black uppercase tracking-[0.18em] flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+            style={{
+              background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)",
+              color: "#0B1A2A",
+              boxShadow: "0 12px 32px -14px rgba(201,169,98,0.6)",
+            }}
+          >
+            {isVehicleTab ? "Fokusz jarmu" : "Uj rekord"}
+            <ArrowRight className="w-4 h-4" strokeWidth={2.6} />
+          </button>
+          <button
+            onClick={onSecondaryAction}
+            className="h-12 px-4 rounded-2xl border border-[#C9A962]/12 bg-[#13273c]/70 text-[#F7F5F1]/76 text-[11px] font-black uppercase tracking-[0.16em] transition-all active:scale-[0.98]"
+          >
+            {isVehicleTab ? "Naplo" : "Jarmuvek"}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HeroMetric({ label, value, tone, icon: Icon }: any) {
+  const style = getToneStyles(tone);
+  return (
+    <div className="rounded-2xl border p-3" style={{ backgroundColor: "rgba(12,26,42,0.5)", borderColor: style.border }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[9px] font-black uppercase tracking-[0.18em]" style={{ color: `${style.color}CC` }}>
+          {label}
+        </div>
+        <div className="w-7 h-7 rounded-xl flex items-center justify-center border" style={{ backgroundColor: style.bg, borderColor: style.border, color: style.color }}>
+          <Icon className="w-3.5 h-3.5" strokeWidth={2.3} />
+        </div>
+      </div>
+      <div className="mt-2 text-[18px] font-black leading-none tracking-tight text-[#F7F5F1] truncate">{value}</div>
+    </div>
+  );
+}
+
+function InsightRail({ items }: any) {
+  return (
+    <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1">
+      {items.map((item: any) => {
+        const style = getToneStyles(item.tone);
+        const Icon = item.icon;
+        return (
+          <div
+            key={item.label}
+            className="min-w-[180px] flex-1 rounded-2xl border px-3 py-3 flex items-center gap-3"
+            style={{ backgroundColor: "rgba(19,39,60,0.56)", borderColor: style.border }}
+          >
+            <div className="w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0" style={{ backgroundColor: style.bg, borderColor: style.border, color: style.color }}>
+              <Icon className="w-[17px] h-[17px]" strokeWidth={2.1} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[9px] font-black uppercase tracking-[0.16em]" style={{ color: `${style.color}D9` }}>
+                {item.label}
+              </div>
+              <div className="mt-1 text-[12.5px] font-bold text-[#F7F5F1] truncate">{item.value}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* === VEHICLE LIST ITEM - mobile optimized elegant LIST, NOT CARDS === */
 function VehicleRow({
   vehicle,
@@ -897,6 +1288,7 @@ function VehicleRow({
   records,
   upcoming,
   lastRecord,
+  priority,
   index,
   onToggle,
   onPatch,
@@ -911,6 +1303,8 @@ function VehicleRow({
   const cond = CONDITION_META[v.condition];
   const CondIcon = cond.icon;
   const st = statusMeta[v.status];
+  const focus = priority ?? getVehiclePriority(v, upcoming?.days, records.length);
+  const focusStyle = getToneStyles(focus.tone);
   const upcomingDays = upcoming?.days;
   const upcomingBadge = upcoming?.record;
   const nextCheckTone =
@@ -980,6 +1374,14 @@ function VehicleRow({
               >
                 {st.label}
               </span>
+              {focus.score >= 48 && (
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-[8.5px] font-black uppercase tracking-[0.08em] shrink-0 border"
+                  style={{ backgroundColor: focusStyle.bg, borderColor: focusStyle.border, color: focusStyle.color }}
+                >
+                  {focus.label}
+                </span>
+              )}
               {upcomingBadge && nextCheckTone && (
                 <span
                   className="px-1.5 py-0.5 rounded-md text-[8.5px] font-black uppercase tracking-[0.08em] shrink-0"
@@ -1031,7 +1433,7 @@ function VehicleRow({
 
         {/* Right actions: CTA + expand - SHRINK-0 so buttons never get cut off, keep width stable */}
         <div className="flex items-center gap-1.5 shrink-0 pl-1">
-          <ActionPatchButton parked={isParked} onClick={(e) => { onPatch({ status: isParked ? "on_route" : "parked" }); }} />
+          <ActionPatchButton parked={isParked} onClick={() => { onPatch({ status: isParked ? "on_route" : "parked" }); }} />
           <button
             onClick={onToggle}
             aria-label={expanded ? "Összecsukás" : "Kibontás"}
@@ -1060,7 +1462,7 @@ function VehicleRow({
           </div>
 
           {/* Info badges row */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div
               className="p-3 rounded-2xl border flex items-center gap-2.5"
               style={{ backgroundColor: "rgba(26,45,68,0.4)", borderColor: cond.borderColor }}
@@ -1096,6 +1498,25 @@ function VehicleRow({
                 </div>
                 <div className="text-[12.5px] font-black truncate text-[#C9A962]">
                   {records.length} db
+                </div>
+              </div>
+            </div>
+            <div
+              className="p-3 rounded-2xl border flex items-center gap-2.5"
+              style={{ backgroundColor: "rgba(26,45,68,0.4)", borderColor: focusStyle.border }}
+            >
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border"
+                style={{ backgroundColor: focusStyle.bg, borderColor: focusStyle.border, color: focusStyle.color }}
+              >
+                <Sparkles className="w-[16px] h-[16px]" strokeWidth={2.2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#F7F5F1]/45">
+                  Prioritas
+                </div>
+                <div className="text-[12.5px] font-black truncate" style={{ color: focusStyle.color }}>
+                  {focus.label}
                 </div>
               </div>
             </div>
@@ -1150,7 +1571,7 @@ function VehicleRow({
   );
 }
 
-function ActionPatchButton({ parked, onClick }: { parked: boolean; onClick: (e: any) => void }) {
+function ActionPatchButton({ parked, onClick }: { parked: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}

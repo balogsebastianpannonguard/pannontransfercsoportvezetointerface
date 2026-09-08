@@ -154,3 +154,42 @@ body {
 .animate-slide-up-bottom {
   animation: slide-up-bottom 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+
+.ambient-grid {
+  background-image:
+    linear-gradient(rgba(201, 169, 98, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(201, 169, 98, 0.045) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at center, black 38%, transparent 82%);
+  -webkit-mask-image: radial-gradient(circle at center, black 38%, transparent 82%);
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-20%);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateY(110%);
+    opacity: 0;
+  }
+}
+
+.ambient-scan::before {
+  content: "";
+  position: absolute;
+  inset: -20% 0 auto;
+  height: 140px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(201, 169, 98, 0.03) 35%,
+    rgba(201, 169, 98, 0.08) 50%,
+    rgba(201, 169, 98, 0.03) 65%,
+    transparent 100%
+  );
+  animation: scanline 8s linear infinite;
+}
