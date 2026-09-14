@@ -566,10 +566,61 @@ export default function GroupLeaderDashboardClient() {
   // Loading skeleton
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0B1A2A" }}>
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-2 border-[#C9A962]/30 border-t-[#C9A962] rounded-full animate-spin" />
-          <p className="text-[#C9A962]/70 text-sm tracking-widest uppercase">Betöltés...</p>
+      <div className="min-h-screen min-h-[100dvh] flex flex-col p-4 sm:p-6" style={{ background: "#0B1A2A" }}>
+        {/* Skeleton Header */}
+        <div className="flex justify-between items-center mb-8 pt-[max(1rem,env(safe-area-inset-top))]">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#C9A962]/10 animate-pulse-glow flex items-center justify-center border border-[#C9A962]/20 shadow-[0_0_20px_rgba(201,169,98,0.15)]">
+              <CarFront className="w-6 h-6 text-[#C9A962]" strokeWidth={2} />
+            </div>
+            <div>
+              <div className="w-24 h-4 rounded bg-[#C9A962]/20 mb-2 animate-shimmer" />
+              <div className="w-32 h-5 rounded bg-[#F7F5F1]/10 animate-shimmer" />
+            </div>
+          </div>
+          <div className="w-10 h-10 rounded-full bg-[#1a2d44] animate-shimmer" />
+        </div>
+
+        {/* Skeleton Live Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-[88px] rounded-2xl bg-[#1a2d44]/50 border border-[#C9A962]/10 overflow-hidden relative">
+              <div className="absolute inset-0 bg-[#C9A962]/[0.02] animate-shimmer" />
+              <div className="p-4 flex flex-col justify-between h-full">
+                <div className="w-8 h-8 rounded-full bg-[#C9A962]/10" />
+                <div className="w-16 h-4 rounded bg-[#F7F5F1]/10" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Skeleton Main Cards */}
+        <div className="flex-1 space-y-4">
+          <div className="h-[140px] rounded-[24px] bg-[#1a2d44]/50 border border-[#C9A962]/10 relative overflow-hidden">
+            <div className="absolute inset-0 bg-[#C9A962]/[0.02] animate-shimmer" />
+            <div className="p-5 flex gap-4 h-full">
+              <div className="w-16 h-16 rounded-xl bg-[#F7F5F1]/5 shrink-0" />
+              <div className="flex-1 space-y-3 pt-2">
+                <div className="w-1/3 h-5 rounded bg-[#F7F5F1]/10" />
+                <div className="w-1/2 h-3 rounded bg-[#C9A962]/20" />
+                <div className="w-1/4 h-3 rounded bg-[#F7F5F1]/10" />
+              </div>
+            </div>
+          </div>
+          <div className="h-[140px] rounded-[24px] bg-[#1a2d44]/50 border border-[#C9A962]/10 relative overflow-hidden">
+             <div className="absolute inset-0 bg-[#C9A962]/[0.02] animate-shimmer" style={{ animationDelay: "0.2s" }} />
+          </div>
+          <div className="h-[140px] rounded-[24px] bg-[#1a2d44]/50 border border-[#C9A962]/10 relative overflow-hidden">
+             <div className="absolute inset-0 bg-[#C9A962]/[0.02] animate-shimmer" style={{ animationDelay: "0.4s" }} />
+          </div>
+        </div>
+
+        {/* Floating loading indicator */}
+        <div className="fixed bottom-[15%] left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-[3px] border-[#C9A962]/20 border-t-[#C9A962] rounded-full animate-spin shadow-[0_0_15px_rgba(201,169,98,0.4)]" />
+          <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#C9A962] drop-shadow-[0_0_10px_rgba(201,169,98,0.5)]">
+            Adatok szinkronizálása
+          </span>
         </div>
       </div>
     );
@@ -1330,9 +1381,19 @@ export default function GroupLeaderDashboardClient() {
             {/* Records list */}
             <div className="space-y-2">
               {filteredServiceRecordsEnhanced.length === 0 && (
-                <div className="text-center py-12 text-[#F7F5F1]/30">
-                  <Wrench size={32} className="mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Nincs rögzített szervizrekord</p>
+                <div className="flex flex-col items-center justify-center py-16 px-4 rounded-3xl bg-[rgba(26,45,68,0.3)] border border-[#C9A962]/10 overflow-hidden relative group">
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#C9A962]/[0.02] to-transparent pointer-events-none" />
+                  <div className="w-20 h-20 rounded-full flex items-center justify-center mb-5 relative">
+                    <div className="absolute inset-0 bg-[#C9A962]/10 rounded-full animate-pulse-glow" />
+                    <div className="absolute inset-2 bg-[#C9A962]/20 rounded-full" />
+                    <Wrench size={32} className="text-[#C9A962] relative z-10" />
+                  </div>
+                  <h3 className="text-lg font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mb-2 tracking-wide">
+                    Üres szerviznapló
+                  </h3>
+                  <p className="text-[13px] text-[#F7F5F1]/40 text-center max-w-[280px]">
+                    Nincs a feltételeknek megfelelő rögzített szervizrekord.
+                  </p>
                 </div>
               )}
               {filteredServiceRecordsEnhanced.map((r, i) => {
@@ -1420,9 +1481,19 @@ export default function GroupLeaderDashboardClient() {
             {/* Leave list */}
             <div className="space-y-3">
               {filteredLeaves.length === 0 && (
-                <div className="text-center py-12 text-[#F7F5F1]/30">
-                  <Calendar size={32} className="mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Nincs szabadságkérelem</p>
+                <div className="flex flex-col items-center justify-center py-16 px-4 rounded-3xl bg-[rgba(26,45,68,0.3)] border border-[#C9A962]/10 overflow-hidden relative group">
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#C9A962]/[0.02] to-transparent pointer-events-none" />
+                  <div className="w-20 h-20 rounded-full flex items-center justify-center mb-5 relative">
+                    <div className="absolute inset-0 bg-[#C9A962]/10 rounded-full animate-pulse-glow" />
+                    <div className="absolute inset-2 bg-[#C9A962]/20 rounded-full" />
+                    <Calendar size={32} className="text-[#C9A962] relative z-10" />
+                  </div>
+                  <h3 className="text-lg font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mb-2 tracking-wide">
+                    Nincs szabadságkérelem
+                  </h3>
+                  <p className="text-[13px] text-[#F7F5F1]/40 text-center max-w-[280px]">
+                    Jelenleg egyetlen sofőr sem nyújtott be szabadságigényt, vagy nem egyezik a szűréssel.
+                  </p>
                 </div>
               )}
               {filteredLeaves.map((l) => {
@@ -1656,12 +1727,19 @@ export default function GroupLeaderDashboardClient() {
             </div>
 
             {alertItems.length === 0 && (
-              <div className="text-center py-16">
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(16,185,129,0.1)" }}>
-                  <ShieldCheck size={28} className="text-[#10b981]" />
+              <div className="flex flex-col items-center justify-center py-20 px-4 rounded-3xl bg-[rgba(16,185,129,0.03)] border border-[rgba(16,185,129,0.1)] overflow-hidden relative">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-[#10b981]/20 blur-[80px] rounded-full pointer-events-none" />
+                <div className="w-20 h-20 rounded-full flex items-center justify-center mb-6 relative">
+                  <div className="absolute inset-0 bg-[#10b981]/10 rounded-full animate-pulse-glow" />
+                  <div className="absolute inset-2 bg-[#10b981]/20 rounded-full shadow-[0_0_30px_rgba(16,185,129,0.3)]" />
+                  <ShieldCheck size={36} className="text-[#10b981] relative z-10" strokeWidth={2.5} />
                 </div>
-                <h3 className="text-[#F7F5F1]/70 font-medium">Minden rendben!</h3>
-                <p className="text-sm text-[#F7F5F1]/35 mt-1">Nincs aktív figyelmeztetés</p>
+                <h3 className="text-[22px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mb-2 tracking-wide drop-shadow-[0_2px_8px_rgba(16,185,129,0.4)]">
+                  Minden a legnagyobb rendben!
+                </h3>
+                <p className="text-[14px] text-[#F7F5F1]/50 text-center max-w-[300px]">
+                  Jelenleg nincs aktív figyelmeztetés, lejárt szerviz vagy sürgős teendő a flottában.
+                </p>
               </div>
             )}
 
