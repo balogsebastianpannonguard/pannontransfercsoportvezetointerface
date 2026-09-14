@@ -8,7 +8,9 @@ import {
   Clock, Droplets, FileText, Gauge, Hash, Home, LogOut, Menu,
   Palette, Pencil, Plus, RefreshCw, Search, ShieldCheck, Sparkles,
   Trash2, TrendingUp, Truck, Users, Wrench, X, XCircle, MapPin,
-  ArrowRight, BarChart3, Zap, Star, Coffee,
+  ArrowRight, BarChart3, Zap, Star, Coffee, Navigation, Route,
+  CalendarCheck, CalendarX, Fuel, Timer, ChevronUp, Filter,
+  Download, ThumbsUp, ThumbsDown, Eye,
 } from "lucide-react";
 import ServiceRecordModal from "./ServiceRecordModal";
 import { getServiceTypeLabel } from "../../lib/serviceTypes";
@@ -20,6 +22,7 @@ type VehicleCondition = "working" | "debrecen_only" | "not_working";
 type LeaveStatus = "pending" | "approved" | "rejected";
 type LeaveType = "fizetett" | "betegseg" | "rendkivuli" | "egyeb";
 type NavSection = "overview" | "vehicles" | "service" | "oil" | "tires" | "leaves" | "stats" | "alerts";
+type DateFilter = "all" | "thisMonth" | "thisYear";
 
 interface Vehicle {
   _id: string;
@@ -190,6 +193,13 @@ export default function GroupLeaderDashboardClient() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Live clock
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // Navigation
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<NavSection>("overview");
@@ -202,6 +212,8 @@ export default function GroupLeaderDashboardClient() {
   const [search, setSearch] = useState("");
   const [vehicleCondFilter, setVehicleCondFilter] = useState<"all" | VehicleCondition>("all");
   const [leaveFilter, setLeaveFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [serviceVehicleFilter, setServiceVehicleFilter] = useState<string>("all");
+  const [serviceDateFilter, setServiceDateFilter] = useState<DateFilter>("all");
 
   // Vehicle expansion
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null);
@@ -217,6 +229,9 @@ export default function GroupLeaderDashboardClient() {
   const [reviewLeave, setReviewLeave] = useState<LeaveRequest | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  // Quick leave decision (inline, no modal)
+  const [quickDecideId, setQuickDecideId] = useState<string | null>(null);
+  const [quickNote, setQuickNote] = useState("");
 
   // Toast
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -268,6 +283,12 @@ export default function GroupLeaderDashboardClient() {
   }, [showToast]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Auto-refresh every 60 seconds
+  useEffect(() => {
+    const t = setInterval(() => { void fetchAll(true); }, 60000);
+    return () => clearInterval(t);
+  }, [fetchAll]);
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -443,6 +464,72 @@ export default function GroupLeaderDashboardClient() {
     if (q) list = list.filter((r) => [r.title, r.vehicleName, r.vehiclePlateNumber, r.notes, r.servicePartner].filter(Boolean).join(" ").toLowerCase().includes(q));
     return list.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
   }, [records, activeSection, search]);
+
+  // ── New derived data ──────────────────────────────────────────────────────
+
+  // Today's service records (nextCheckDate == today)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todaysServices = useMemo(() =>
+    records.filter((r) => r.nextCheckDate === todayStr),
+  [records, todayStr]);
+
+  // This week's approved/pending leaves
+  const thisWeekLeaves = useMemo(() => {
+    const mon = new Date();
+    mon.setHours(0,0,0,0);
+    mon.setDate(mon.getDate() - mon.getDay() + 1);
+    const sun = new Date(mon);
+    sun.setDate(mon.getDate() + 6);
+    return leaves.filter((l) => {
+      if (l.status === 'rejected') return false;
+      const start = new Date(l.startDate);
+      const end = new Date(l.endDate);
+      return start <= sun && end >= mon;
+    });
+  }, [leaves]);
+
+  // Monthly service trend (last 6 months)
+  const monthlyTrend = useMemo(() => {
+    const months: { label: string; count: number; cost: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - i);
+      const ym = d.toISOString().slice(0, 7);
+      const label = d.toLocaleDateString('hu-HU', { month: 'short' });
+      const monthRecs = records.filter((r) => (r.date ?? '').startsWith(ym));
+      months.push({ label, count: monthRecs.length, cost: monthRecs.reduce((s, r) => s + (typeof r.costHUF === 'number' ? r.costHUF : 0), 0) });
+    }
+    return months;
+  }, [records]);
+
+  // Per-vehicle service count for stats
+  const perVehicleStats = useMemo(() => {
+    return vehicles.map((v) => ({
+      name: v.name,
+      plates: v.plates,
+      count: records.filter((r) => String(r.vehicleId) === v._id).length,
+      cost: records.filter((r) => String(r.vehicleId) === v._id).reduce((s, r) => s + (typeof r.costHUF === 'number' ? r.costHUF : 0), 0),
+    })).sort((a, b) => b.count - a.count);
+  }, [vehicles, records]);
+
+  // Filtered service records with vehicle + date filter
+  const filteredServiceRecordsEnhanced = useMemo(() => {
+    const q = search.toLowerCase();
+    let list = [...records];
+    if (activeSection === 'oil') list = list.filter((r) => r.type === 'olajcsere');
+    if (activeSection === 'tires') list = list.filter((r) => r.type === 'gumicsere');
+    if (serviceVehicleFilter !== 'all') list = list.filter((r) => String(r.vehicleId) === serviceVehicleFilter);
+    if (serviceDateFilter === 'thisMonth') {
+      const ym = new Date().toISOString().slice(0, 7);
+      list = list.filter((r) => (r.date ?? '').startsWith(ym));
+    } else if (serviceDateFilter === 'thisYear') {
+      const y = new Date().toISOString().slice(0, 4);
+      list = list.filter((r) => (r.date ?? '').startsWith(y));
+    }
+    if (q) list = list.filter((r) => [r.title, r.vehicleName, r.vehiclePlateNumber, r.notes, r.servicePartner].filter(Boolean).join(' ').toLowerCase().includes(q));
+    return list.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+  }, [records, activeSection, serviceVehicleFilter, serviceDateFilter, search]);
 
   const alertItems = useMemo(() => {
     const items: { label: string; detail: string; tone: "critical" | "warn" | "info"; vehicleName?: string; days?: number }[] = [];
@@ -693,69 +780,219 @@ export default function GroupLeaderDashboardClient() {
 
         {/* ════ OVERVIEW ════ */}
         {activeSection === "overview" && (
-          <div className="animate-slide-up space-y-6">
-            {/* Greeting */}
+          <div className="animate-slide-up space-y-5">
+
+            {/* ── CRITICAL BANNER ── */}
+            {(serviceStats.overdue > 0 || stats.broken > 0) && (
+              <div
+                className="urgent-pulse rounded-2xl p-4 flex items-center gap-3"
+                style={{ background: 'rgba(244,63,94,0.13)', border: '1.5px solid rgba(244,63,94,0.35)' }}
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(244,63,94,0.2)' }}>
+                  <AlertTriangle size={18} style={{ color: '#fb7185' }} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-[#fb7185]">Azonnali figyelmet igényel!</p>
+                  <p className="text-xs text-[#F7F5F1]/60 mt-0.5">
+                    {serviceStats.overdue > 0 && `${serviceStats.overdue} lejárt szerviz`}
+                    {serviceStats.overdue > 0 && stats.broken > 0 && ' · '}
+                    {stats.broken > 0 && `${stats.broken} hibás jármű`}
+                  </p>
+                </div>
+                <button onClick={() => navigate('alerts')} className="text-xs px-3 py-1.5 rounded-lg font-bold" style={{ background: 'rgba(244,63,94,0.2)', color: '#fb7185' }}>
+                  Részletek →
+                </button>
+              </div>
+            )}
+
+            {/* ── LIVE CLOCK + GREETING ── */}
             <div className="rounded-2xl p-5" style={{ background: "linear-gradient(135deg, rgba(201,169,98,0.12) 0%, rgba(11,26,42,0.8) 100%)", border: "1px solid rgba(201,169,98,0.2)" }}>
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs text-[#C9A962]/60 tracking-widest uppercase mb-1">{new Date().toLocaleDateString("hu-HU", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+                <div className="flex-1">
+                  <p className="text-xs text-[#C9A962]/60 tracking-widest uppercase mb-1">
+                    {now.toLocaleDateString("hu-HU", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+                  </p>
                   <h2 className="text-xl font-bold text-[#F7F5F1]">{getGreeting(displayName)}</h2>
                   <p className="text-sm text-[#F7F5F1]/50 mt-1">{getMotivation()}</p>
                 </div>
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(201,169,98,0.15)" }}>
-                  <Coffee size={22} className="text-[#C9A962]" />
+                <div className="text-right flex-shrink-0">
+                  <div className="flex items-center gap-1.5 justify-end mb-1">
+                    <span className="live-dot" />
+                    <span className="text-[10px] text-[#10b981] font-bold tracking-widest uppercase">Élő</span>
+                  </div>
+                  <p className="text-3xl font-black text-[#C9A962] tabular-nums" style={{ fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+                    {now.toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Quick stats */}
+            {/* ── QUICK STATS ── */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: "Összes jármű", value: stats.total, icon: Truck, color: "#C9A962", sub: `${stats.onRoute} úton` },
-                { label: "Működőképes", value: stats.working, icon: ShieldCheck, color: "#10b981", sub: `${stats.broken} meghibásodott` },
-                { label: "Szerviz figyelő", value: serviceStats.overdue, icon: AlertTriangle, color: serviceStats.overdue > 0 ? "#fb7185" : "#34d399", sub: `${serviceStats.dueSoon} hamarosan` },
-                { label: "Szabadság kérelem", value: pendingLeaves, icon: Calendar, color: pendingLeaves > 0 ? "#fbbf24" : "#34d399", sub: "Döntésre vár" },
+                { label: "Összes jármű", value: stats.total, icon: Truck, color: "#C9A962", sub: `${stats.onRoute} úton · ${stats.parked} parkol`, onClick: () => navigate('vehicles') },
+                { label: "Működőképes", value: stats.working, icon: ShieldCheck, color: "#10b981", sub: `${stats.broken} meghibásodott`, onClick: () => navigate('vehicles') },
+                { label: "Lejárt szerviz", value: serviceStats.overdue, icon: AlertTriangle, color: serviceStats.overdue > 0 ? "#fb7185" : "#34d399", sub: `${serviceStats.dueSoon} hamarosan`, onClick: () => navigate('alerts') },
+                { label: "Kérelem", value: pendingLeaves, icon: Calendar, color: pendingLeaves > 0 ? "#fbbf24" : "#34d399", sub: "Döntésre vár", onClick: () => navigate('leaves') },
               ].map((s) => (
-                <div key={s.label} className="rounded-xl p-4 card-glass">
+                <button key={s.label} onClick={s.onClick} className="rounded-xl p-4 card-glass qa-card text-left">
                   <div className="flex items-center justify-between mb-3">
                     <s.icon size={18} style={{ color: s.color }} />
                     <span className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</span>
                   </div>
-                  <p className="text-xs font-medium text-[#F7F5F1]/70">{s.label}</p>
+                  <p className="text-xs font-semibold text-[#F7F5F1]/80">{s.label}</p>
                   <p className="text-xs text-[#F7F5F1]/35 mt-0.5">{s.sub}</p>
-                </div>
+                </button>
               ))}
             </div>
 
-            {/* Alerts preview */}
-            {alertItems.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-[#F7F5F1]/80">Figyelmeztetések</h3>
-                  <button onClick={() => navigate("alerts")} className="text-xs text-[#C9A962]/70 flex items-center gap-1">
-                    Összes <ChevronRight size={12} />
-                  </button>
+            {/* ── FLEET LIVE STATUS ── */}
+            <div className="rounded-2xl card-glass overflow-hidden">
+              <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: '1px solid rgba(201,169,98,0.1)' }}>
+                <div className="flex items-center gap-2">
+                  <Route size={15} className="text-[#C9A962]" />
+                  <h3 className="text-sm font-bold text-[#F7F5F1]">Flotta – Élő állapot</h3>
                 </div>
-                <div className="space-y-2">
-                  {alertItems.slice(0, 3).map((a, i) => (
-                    <div key={i} className="rounded-xl p-3 flex items-start gap-3" style={{
-                      background: a.tone === "critical" ? "rgba(244,63,94,0.1)" : a.tone === "warn" ? "rgba(245,158,11,0.1)" : "rgba(59,130,246,0.1)",
-                      border: `1px solid ${a.tone === "critical" ? "rgba(244,63,94,0.2)" : a.tone === "warn" ? "rgba(245,158,11,0.2)" : "rgba(59,130,246,0.2)"}`,
-                    }}>
-                      <AlertTriangle size={15} style={{ color: a.tone === "critical" ? "#fb7185" : a.tone === "warn" ? "#fbbf24" : "#93c5fd", flexShrink: 0, marginTop: 1 }} />
-                      <div>
-                        <p className="text-sm font-medium text-[#F7F5F1]">{a.label}</p>
-                        <p className="text-xs text-[#F7F5F1]/50 mt-0.5">{a.detail}</p>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex items-center gap-1.5">
+                  <span className="live-dot" />
+                  <span className="text-[10px] text-[#10b981] font-bold tracking-widest uppercase">Live</span>
                 </div>
               </div>
-            )}
+              <div className="grid grid-cols-2 divide-x" style={{ borderColor: 'rgba(201,169,98,0.1)' }}>
+                {/* On route */}
+                <div className="p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Navigation size={13} style={{ color: '#93c5fd' }} />
+                    <p className="text-xs font-bold text-[#93c5fd] tracking-widest uppercase">Úton ({stats.onRoute})</p>
+                  </div>
+                  <div className="space-y-2">
+                    {vehicles.filter((v) => v.status === 'on_route').length === 0 && (
+                      <p className="text-xs text-[#F7F5F1]/30">Nincs úton lévő jármű</p>
+                    )}
+                    {vehicles.filter((v) => v.status === 'on_route').map((v) => (
+                      <div key={v._id} className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-[#F7F5F1] truncate">{v.name}</p>
+                          {v.plates && <p className="text-[10px] text-[#F7F5F1]/35">{v.plates}</p>}
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: CONDITION_META[v.condition].bg, color: CONDITION_META[v.condition].textColor }}>
+                          {CONDITION_META[v.condition].label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Parked */}
+                <div className="p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <CarFront size={13} style={{ color: '#94a3b8' }} />
+                    <p className="text-xs font-bold text-[#94a3b8] tracking-widest uppercase">Parkol ({stats.parked})</p>
+                  </div>
+                  <div className="space-y-2">
+                    {vehicles.filter((v) => v.status === 'parked').length === 0 && (
+                      <p className="text-xs text-[#F7F5F1]/30">Nincs parkolt jármű</p>
+                    )}
+                    {vehicles.filter((v) => v.status === 'parked').slice(0, 5).map((v) => (
+                      <div key={v._id} className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-slate-500 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-[#F7F5F1]/70 truncate">{v.name}</p>
+                          {v.plates && <p className="text-[10px] text-[#F7F5F1]/30">{v.plates}</p>}
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: CONDITION_META[v.condition].bg, color: CONDITION_META[v.condition].textColor }}>
+                          {CONDITION_META[v.condition].label}
+                        </span>
+                      </div>
+                    ))}
+                    {vehicles.filter((v) => v.status === 'parked').length > 5 && (
+                      <p className="text-[10px] text-[#F7F5F1]/30">+{vehicles.filter((v) => v.status === 'parked').length - 5} további</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
 
-            {/* Quick actions */}
+            {/* ── TODAY'S SERVICES + WEEKLY LEAVES ROW ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Today's services */}
+              <div className="rounded-2xl card-glass p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Timer size={14} className="text-[#C9A962]" />
+                  <h3 className="text-xs font-bold text-[#F7F5F1]/80 uppercase tracking-widest">Ma esedékes</h3>
+                  {todaysServices.length > 0 && (
+                    <span className="ml-auto text-xs font-black px-2 py-0.5 rounded-full" style={{ background: 'rgba(251,191,36,0.2)', color: '#fbbf24' }}>
+                      {todaysServices.length}
+                    </span>
+                  )}
+                </div>
+                {todaysServices.length === 0 ? (
+                  <div className="flex items-center gap-2 py-2">
+                    <CheckCircle2 size={14} className="text-[#10b981]" />
+                    <p className="text-xs text-[#F7F5F1]/40">Ma nincs esedékes szerviz</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {todaysServices.slice(0, 3).map((r, i) => {
+                      const Icon = SERVICE_TYPE_ICONS[r.type as ServiceRecordType] ?? FileText;
+                      const color = SERVICE_TYPE_COLORS[r.type as ServiceRecordType] ?? '#94a3b8';
+                      return (
+                        <div key={i} className="flex items-center gap-2 rounded-lg p-2" style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
+                          <Icon size={13} style={{ color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-[#F7F5F1] truncate">{r.vehicleName ?? '—'}</p>
+                            <p className="text-[10px] text-[#F7F5F1]/40 truncate">{getServiceTypeLabel(r.type as ServiceRecordType)}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* This week's leaves */}
+              <div className="rounded-2xl card-glass p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <CalendarCheck size={14} className="text-[#8b5cf6]" />
+                  <h3 className="text-xs font-bold text-[#F7F5F1]/80 uppercase tracking-widest">Ezen a héten szabi</h3>
+                  {thisWeekLeaves.length > 0 && (
+                    <span className="ml-auto text-xs font-black px-2 py-0.5 rounded-full" style={{ background: 'rgba(139,92,246,0.2)', color: '#a78bfa' }}>
+                      {thisWeekLeaves.length}
+                    </span>
+                  )}
+                </div>
+                {thisWeekLeaves.length === 0 ? (
+                  <div className="flex items-center gap-2 py-2">
+                    <CheckCircle2 size={14} className="text-[#10b981]" />
+                    <p className="text-xs text-[#F7F5F1]/40">Ezen a héten mindenki dolgozik</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {thisWeekLeaves.slice(0, 3).map((l, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-lg p-2" style={{ background: 'rgba(139,92,246,0.07)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0" style={{ background: 'rgba(139,92,246,0.2)', color: '#a78bfa' }}>
+                          {l.driverName.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-[#F7F5F1] truncate">{l.driverName}</p>
+                          <p className="text-[10px] text-[#F7F5F1]/40">{fmtDate(l.startDate)} – {fmtDate(l.endDate)}</p>
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: LEAVE_STATUS_META[l.status].bg, color: LEAVE_STATUS_META[l.status].text }}>
+                          {l.days}n
+                        </span>
+                      </div>
+                    ))}
+                    {thisWeekLeaves.length > 3 && (
+                      <button onClick={() => navigate('leaves')} className="text-[10px] text-[#a78bfa]/70 pt-1">+{thisWeekLeaves.length - 3} további →</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── QUICK ACTIONS ── */}
             <div>
-              <h3 className="text-sm font-semibold text-[#F7F5F1]/80 mb-3">Gyors műveletek</h3>
+              <h3 className="text-xs font-bold text-[#F7F5F1]/50 uppercase tracking-widest mb-3">Gyors műveletek</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
                   { label: "Járműpark", icon: Truck, section: "vehicles" as NavSection, color: "#C9A962" },
@@ -766,25 +1003,25 @@ export default function GroupLeaderDashboardClient() {
                   <button
                     key={qa.section}
                     onClick={() => navigate(qa.section)}
-                    className="rounded-xl p-4 flex flex-col items-center gap-2 text-center card-glass transition-all duration-150 hover:scale-[1.02]"
+                    className="rounded-xl p-4 flex flex-col items-center gap-2 text-center card-glass qa-card"
                   >
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${qa.color}18` }}>
                       <qa.icon size={20} style={{ color: qa.color }} />
                     </div>
-                    <span className="text-xs font-medium text-[#F7F5F1]/70">{qa.label}</span>
+                    <span className="text-xs font-semibold text-[#F7F5F1]/70">{qa.label}</span>
                     {qa.section === "leaves" && pendingLeaves > 0 && (
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(245,158,11,0.2)", color: "#fbbf24" }}>{pendingLeaves} db</span>
+                      <span className="text-xs font-black px-2 py-0.5 rounded-full" style={{ background: "rgba(245,158,11,0.2)", color: "#fbbf24" }}>{pendingLeaves} db</span>
                     )}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Recent service */}
+            {/* ── RECENT SERVICES ── */}
             {records.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-[#F7F5F1]/80">Legutóbbi szervizek</h3>
+                  <h3 className="text-xs font-bold text-[#F7F5F1]/50 uppercase tracking-widest">Legutóbbi szervizek</h3>
                   <button onClick={() => navigate("service")} className="text-xs text-[#C9A962]/70 flex items-center gap-1">Összes <ChevronRight size={12} /></button>
                 </div>
                 <div className="space-y-2">
@@ -856,7 +1093,7 @@ export default function GroupLeaderDashboardClient() {
                 const ub = urgencyBadge(upcoming?.days ?? null);
 
                 return (
-                  <div key={vehicle._id} className="rounded-2xl overflow-hidden card-glass" style={{ border: vehicle.condition === "not_working" ? "1px solid rgba(244,63,94,0.3)" : undefined }}>
+                  <div key={vehicle._id} className="rounded-2xl overflow-hidden card-glass" style={{ border: vehicle.condition === "not_working" ? "1.5px solid rgba(244,63,94,0.4)" : vehicle.condition === "debrecen_only" ? "1.5px solid rgba(245,158,11,0.3)" : undefined }}>
                     {/* Card header */}
                     <button className="w-full flex items-start gap-3 p-4 text-left" onClick={() => setExpandedVehicleId(expanded ? null : vehicle._id)}>
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: `${cond.textColor}15` }}>
@@ -865,13 +1102,14 @@ export default function GroupLeaderDashboardClient() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="text-sm font-semibold text-[#F7F5F1]">{vehicle.name}</h3>
-                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: cond.bg, color: cond.textColor, border: `1px solid ${cond.border}` }}>{cond.label}</span>
-                          {vehicle.status === "on_route" && <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(59,130,246,0.15)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.25)" }}>Úton</span>}
+                          <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background: cond.bg, color: cond.textColor, border: `1px solid ${cond.border}` }}>{cond.label}</span>
+                          {vehicle.status === "on_route" && <span className="text-xs px-2 py-0.5 rounded-full font-bold flex items-center gap-1" style={{ background: "rgba(59,130,246,0.15)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.25)" }}><span className="live-dot" style={{ width: 5, height: 5 }} />Úton</span>}
                         </div>
                         <div className="flex items-center gap-3 mt-1 flex-wrap">
-                          {vehicle.plates && <span className="text-xs text-[#F7F5F1]/40">{vehicle.plates}</span>}
+                          {vehicle.plates && <span className="text-xs text-[#F7F5F1]/40 font-mono">{vehicle.plates}</span>}
                           {vehicle.type && <span className="text-xs text-[#F7F5F1]/30">{vehicle.type}</span>}
-                          {ub && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ub.bg, color: ub.color }}>{ub.label}</span>}
+                          {vehicle.seats && <span className="text-xs text-[#F7F5F1]/25">{vehicle.seats} fő</span>}
+                          {ub && <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${ub.color === '#fb7185' ? 'urgent-pulse' : ''}`} style={{ background: ub.bg, color: ub.color }}>{ub.label}</span>}
                         </div>
                       </div>
                       <ChevronDown size={16} className="text-[#F7F5F1]/30 flex-shrink-0 mt-1 transition-transform duration-200" style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
@@ -879,29 +1117,63 @@ export default function GroupLeaderDashboardClient() {
 
                     {/* Expanded content */}
                     {expanded && (
-                      <div className="border-t px-4 pb-4 pt-3 space-y-3" style={{ borderColor: "rgba(201,169,98,0.1)" }}>
-                        {/* Actions row */}
-                        <div className="flex gap-2 flex-wrap">
-                          <button onClick={() => patchVehicle(vehicle._id, { status: vehicle.status === "on_route" ? "parked" : "on_route" })}
-                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
-                            style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.2)" }}>
-                            <ArrowRight size={12} />
-                            {vehicle.status === "on_route" ? "Parkoltba" : "Útra küld"}
-                          </button>
-                          <button onClick={() => openCreate(vehicle._id, "oil")}
-                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
-                            style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.2)" }}>
-                            <Droplets size={12} /> Olajcsere
-                          </button>
-                          <button onClick={() => openCreate(vehicle._id, "tire")}
-                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
-                            style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.2)" }}>
-                            <CircleDot size={12} /> Gumicsere
+                      <div className="border-t px-4 pb-4 pt-3 space-y-4" style={{ borderColor: "rgba(201,169,98,0.1)" }}>
+
+                        {/* ── CONDITION TOGGLE (big visual buttons) ── */}
+                        <div>
+                          <p className="text-[10px] text-[#F7F5F1]/40 uppercase tracking-widest mb-2">Jármű állapota</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            {(['working', 'debrecen_only', 'not_working'] as VehicleCondition[]).map((cnd) => {
+                              const meta = CONDITION_META[cnd];
+                              const isActive = vehicle.condition === cnd;
+                              return (
+                                <button
+                                  key={cnd}
+                                  onClick={() => !isActive && patchVehicle(vehicle._id, { condition: cnd })}
+                                  className="rounded-xl p-2.5 text-center transition-all duration-200"
+                                  style={{
+                                    background: isActive ? meta.bg : 'rgba(255,255,255,0.03)',
+                                    border: `1.5px solid ${isActive ? meta.border : 'rgba(255,255,255,0.06)'}`,
+                                    transform: isActive ? 'scale(1)' : 'scale(0.96)',
+                                    opacity: isActive ? 1 : 0.55,
+                                  }}
+                                >
+                                  <div className="w-2 h-2 rounded-full mx-auto mb-1.5" style={{ background: meta.dot }} />
+                                  <p className="text-[10px] font-bold leading-tight" style={{ color: isActive ? meta.textColor : 'rgba(247,245,241,0.5)' }}>{meta.label}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* ── ROUTE STATUS TOGGLE ── */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => patchVehicle(vehicle._id, { status: vehicle.status === 'on_route' ? 'parked' : 'on_route' })}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all"
+                            style={{
+                              background: vehicle.status === 'on_route' ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.05)',
+                              border: vehicle.status === 'on_route' ? '1.5px solid rgba(59,130,246,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                              color: vehicle.status === 'on_route' ? '#93c5fd' : 'rgba(247,245,241,0.5)',
+                            }}
+                          >
+                            <Navigation size={13} />
+                            {vehicle.status === 'on_route' ? '🔵 Jelenleg úton' : 'Útra küld'}
                           </button>
                           <button onClick={() => openCreate(vehicle._id)}
-                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
-                            style={{ background: "rgba(201,169,98,0.1)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.2)" }}>
-                            <Plus size={12} /> Szerviz rögzítés
+                            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all"
+                            style={{ background: "rgba(201,169,98,0.12)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.2)" }}>
+                            <Plus size={12} /> Szerviz
+                          </button>
+                          <button onClick={() => openCreate(vehicle._id, "oil")}
+                            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all"
+                            style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.2)" }}>
+                            <Fuel size={12} /> Olaj
+                          </button>
+                          <button onClick={() => openCreate(vehicle._id, "tire")}
+                            className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all"
+                            style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.2)" }}>
+                            <CircleDot size={12} /> Gumi
                           </button>
                         </div>
 
@@ -998,11 +1270,46 @@ export default function GroupLeaderDashboardClient() {
                   setModalMode(activeSection === "oil" ? "oil" : activeSection === "tires" ? "tire" : "main");
                   setModalOpen(true);
                 }}
-                className="flex items-center gap-2 text-sm px-4 py-2 rounded-xl font-medium transition-all hover:scale-105"
+                className="flex items-center gap-2 text-sm px-4 py-2 rounded-xl font-bold transition-all hover:scale-105"
                 style={{ background: "rgba(201,169,98,0.15)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.25)" }}
               >
                 <Plus size={16} /> Új rögzítése
               </button>
+            </div>
+
+            {/* ── EXTRA FILTERS: vehicle + date ── */}
+            <div className="flex gap-2 flex-wrap">
+              <select
+                value={serviceVehicleFilter}
+                onChange={(e) => setServiceVehicleFilter(e.target.value)}
+                className="text-xs px-3 py-1.5 rounded-full outline-none cursor-pointer"
+                style={{ background: serviceVehicleFilter !== 'all' ? 'rgba(201,169,98,0.18)' : 'rgba(255,255,255,0.05)', border: `1px solid ${serviceVehicleFilter !== 'all' ? 'rgba(201,169,98,0.35)' : 'rgba(255,255,255,0.08)'}`, color: serviceVehicleFilter !== 'all' ? '#C9A962' : 'rgba(247,245,241,0.5)' }}
+              >
+                <option value="all">Összes jármű</option>
+                {vehicles.map((v) => (
+                  <option key={v._id} value={v._id}>{v.name}{v.plates ? ` (${v.plates})` : ''}</option>
+                ))}
+              </select>
+              {(['all', 'thisMonth', 'thisYear'] as DateFilter[]).map((f) => (
+                <button key={f} onClick={() => setServiceDateFilter(f)}
+                  className="text-xs px-3 py-1.5 rounded-full transition-all"
+                  style={{
+                    background: serviceDateFilter === f ? 'rgba(201,169,98,0.18)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${serviceDateFilter === f ? 'rgba(201,169,98,0.35)' : 'rgba(255,255,255,0.08)'}`,
+                    color: serviceDateFilter === f ? '#C9A962' : 'rgba(247,245,241,0.5)',
+                  }}
+                >
+                  {f === 'all' ? 'Összes' : f === 'thisMonth' ? 'Ez a hónap' : 'Ez az év'}
+                </button>
+              ))}
+              {(serviceVehicleFilter !== 'all' || serviceDateFilter !== 'all') && (
+                <button onClick={() => { setServiceVehicleFilter('all'); setServiceDateFilter('all'); }}
+                  className="text-xs px-2 py-1.5 rounded-full flex items-center gap-1"
+                  style={{ background: 'rgba(244,63,94,0.1)', color: '#fb7185', border: '1px solid rgba(244,63,94,0.2)' }}
+                >
+                  <X size={10} /> Töröl
+                </button>
+              )}
             </div>
 
             {/* Summary stats */}
@@ -1022,13 +1329,13 @@ export default function GroupLeaderDashboardClient() {
 
             {/* Records list */}
             <div className="space-y-2">
-              {filteredServiceRecords.length === 0 && (
+              {filteredServiceRecordsEnhanced.length === 0 && (
                 <div className="text-center py-12 text-[#F7F5F1]/30">
                   <Wrench size={32} className="mx-auto mb-3 opacity-30" />
                   <p className="text-sm">Nincs rögzített szervizrekord</p>
                 </div>
               )}
-              {filteredServiceRecords.map((r, i) => {
+              {filteredServiceRecordsEnhanced.map((r, i) => {
                 const Icon = SERVICE_TYPE_ICONS[r.type as ServiceRecordType] ?? FileText;
                 const color = SERVICE_TYPE_COLORS[r.type as ServiceRecordType] ?? "#94a3b8";
                 const days = daysUntil(r.nextCheckDate);
@@ -1087,10 +1394,10 @@ export default function GroupLeaderDashboardClient() {
                 { label: "Elutasítva", value: leaves.filter((l) => l.status === "rejected").length, color: "#fb7185", filter: "rejected" as const },
               ].map((s) => (
                 <button key={s.filter} onClick={() => setLeaveFilter(leaveFilter === s.filter ? "all" : s.filter)}
-                  className="rounded-xl p-3 card-glass text-center transition-all"
-                  style={{ border: leaveFilter === s.filter ? `1px solid ${s.color}40` : undefined }}>
-                  <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
-                  <p className="text-xs text-[#F7F5F1]/40 mt-0.5">{s.label}</p>
+                  className="rounded-xl p-3 card-glass text-center transition-all qa-card"
+                  style={{ border: leaveFilter === s.filter ? `1.5px solid ${s.color}50` : undefined }}>
+                  <p className="text-2xl font-black" style={{ color: s.color }}>{s.value}</p>
+                  <p className="text-xs text-[#F7F5F1]/50 mt-0.5 font-semibold">{s.label}</p>
                 </button>
               ))}
             </div>
@@ -1099,7 +1406,7 @@ export default function GroupLeaderDashboardClient() {
             <div className="flex gap-2 flex-wrap">
               {(["all", "pending", "approved", "rejected"] as const).map((f) => (
                 <button key={f} onClick={() => setLeaveFilter(f)}
-                  className="text-xs px-3 py-1.5 rounded-full transition-all"
+                  className="text-xs px-3 py-1.5 rounded-full transition-all font-semibold"
                   style={{
                     background: leaveFilter === f ? "rgba(201,169,98,0.18)" : "rgba(255,255,255,0.04)",
                     border: `1px solid ${leaveFilter === f ? "rgba(201,169,98,0.35)" : "rgba(255,255,255,0.08)"}`,
@@ -1122,23 +1429,30 @@ export default function GroupLeaderDashboardClient() {
                 const typeStyle = LEAVE_TYPE_COLORS[l.type];
                 const statusMeta = LEAVE_STATUS_META[l.status];
                 const StatusIcon = statusMeta.icon;
+                const isQuickOpen = quickDecideId === l._id;
+                const isUrgent = l.status === 'pending' && (() => { const d = new Date(l.startDate); const t = new Date(); t.setHours(0,0,0,0); return (d.getTime() - t.getTime()) / 86400000 <= 3; })();
                 return (
-                  <div key={l._id} className="rounded-2xl card-glass overflow-hidden">
+                  <div key={l._id} className="rounded-2xl card-glass overflow-hidden" style={{ border: isUrgent ? '1.5px solid rgba(244,63,94,0.35)' : undefined }}>
+                    {isUrgent && (
+                      <div className="px-4 py-1.5 text-[10px] font-black tracking-widest uppercase flex items-center gap-1.5" style={{ background: 'rgba(244,63,94,0.12)', color: '#fb7185' }}>
+                        <AlertTriangle size={10} /> Sürgős – holnaputántól kezdődik!
+                      </div>
+                    )}
                     <div className="p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-2">
-                            <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: typeStyle.bg, color: typeStyle.text, border: `1px solid ${typeStyle.border}` }}>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-bold" style={{ background: typeStyle.bg, color: typeStyle.text, border: `1px solid ${typeStyle.border}` }}>
                               {LEAVE_TYPE_LABELS[l.type]}
                             </span>
-                            <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: statusMeta.bg, color: statusMeta.text, border: `1px solid ${statusMeta.border}` }}>
+                            <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1 font-bold" style={{ background: statusMeta.bg, color: statusMeta.text, border: `1px solid ${statusMeta.border}` }}>
                               <StatusIcon size={10} /> {statusMeta.label}
                             </span>
                           </div>
-                          <h4 className="text-sm font-semibold text-[#F7F5F1]">{l.driverName}</h4>
+                          <h4 className="text-sm font-bold text-[#F7F5F1]">{l.driverName}</h4>
                           <div className="flex items-center gap-3 mt-1 flex-wrap">
                             <span className="text-xs text-[#F7F5F1]/50">{fmtDate(l.startDate)} – {fmtDate(l.endDate)}</span>
-                            <span className="text-xs font-medium" style={{ color: "#C9A962" }}>{l.days} nap</span>
+                            <span className="text-xs font-bold" style={{ color: "#C9A962" }}>{l.days} nap</span>
                             {l.driverEmail && <span className="text-xs text-[#F7F5F1]/35">{l.driverEmail}</span>}
                           </div>
                           {l.reason && <p className="text-xs text-[#F7F5F1]/50 mt-1.5 italic">„{l.reason}"</p>}
@@ -1148,15 +1462,37 @@ export default function GroupLeaderDashboardClient() {
                             </p>
                           )}
                         </div>
-                        {l.status === "pending" && (
-                          <button
-                            onClick={() => { setReviewLeave(l); setReviewNote(""); }}
-                            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-all"
-                            style={{ background: "rgba(201,169,98,0.15)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.25)" }}
-                          >
-                            Döntés
-                          </button>
-                        )}
+                        {/* Actions */}
+                        <div className="flex flex-col gap-2 flex-shrink-0">
+                          {l.status === "pending" && (
+                            <div className="flex flex-col gap-1.5">
+                              {/* Quick inline approve/reject */}
+                              <button
+                                onClick={() => handleLeaveReview(l._id, 'approved')}
+                                disabled={reviewSubmitting}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                                style={{ background: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}
+                              >
+                                <ThumbsUp size={11} /> Jóváhagy
+                              </button>
+                              <button
+                                onClick={() => handleLeaveReview(l._id, 'rejected')}
+                                disabled={reviewSubmitting}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                                style={{ background: 'rgba(244,63,94,0.12)', color: '#fb7185', border: '1px solid rgba(244,63,94,0.25)' }}
+                              >
+                                <ThumbsDown size={11} /> Elutasít
+                              </button>
+                              <button
+                                onClick={() => { setReviewLeave(l); setReviewNote(""); }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                                style={{ background: 'rgba(201,169,98,0.1)', color: '#C9A962', border: '1px solid rgba(201,169,98,0.2)' }}
+                              >
+                                <FileText size={11} /> + Megjegyzés
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1173,7 +1509,7 @@ export default function GroupLeaderDashboardClient() {
 
             {/* Fleet health */}
             <div className="rounded-2xl p-5 card-glass">
-              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><Activity size={15} className="text-[#C9A962]" /> Flotta egészség</h3>
+              <h3 className="text-sm font-bold text-[#F7F5F1]/80 mb-4 flex items-center gap-2"><Activity size={15} className="text-[#C9A962]" /> Flotta egészség</h3>
               <div className="flex items-center gap-4">
                 <div className="relative w-20 h-20 flex-shrink-0">
                   <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
@@ -1182,7 +1518,7 @@ export default function GroupLeaderDashboardClient() {
                       strokeDasharray={`${stats.total ? (stats.working / stats.total * 100) : 0} 100`} strokeLinecap="round" />
                   </svg>
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-base font-bold text-[#10b981]">{stats.total ? Math.round(stats.working / stats.total * 100) : 0}%</span>
+                    <span className="text-base font-black text-[#10b981]">{stats.total ? Math.round(stats.working / stats.total * 100) : 0}%</span>
                   </div>
                 </div>
                 <div className="space-y-2 flex-1">
@@ -1193,10 +1529,10 @@ export default function GroupLeaderDashboardClient() {
                   ].map((item) => (
                     <div key={item.label}>
                       <div className="flex justify-between text-xs mb-1">
-                        <span className="text-[#F7F5F1]/50">{item.label}</span>
-                        <span style={{ color: item.color }}>{item.value} / {item.total}</span>
+                        <span className="text-[#F7F5F1]/60 font-medium">{item.label}</span>
+                        <span className="font-bold" style={{ color: item.color }}>{item.value} / {item.total}</span>
                       </div>
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                      <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
                         <div className="h-full rounded-full transition-all" style={{ width: `${item.total ? (item.value / item.total * 100) : 0}%`, background: item.color }} />
                       </div>
                     </div>
@@ -1205,10 +1541,44 @@ export default function GroupLeaderDashboardClient() {
               </div>
             </div>
 
+            {/* ── MONTHLY TREND ── */}
+            <div className="rounded-2xl p-5 card-glass">
+              <h3 className="text-sm font-bold text-[#F7F5F1]/80 mb-5 flex items-center gap-2">
+                <TrendingUp size={15} className="text-[#C9A962]" /> Havi szerviz trend (6 hónap)
+              </h3>
+              <div className="flex items-end gap-2 h-24">
+                {monthlyTrend.map((m, i) => {
+                  const maxCount = Math.max(...monthlyTrend.map((x) => x.count), 1);
+                  const pct = (m.count / maxCount) * 100;
+                  const isCurrentMonth = i === monthlyTrend.length - 1;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                      <p className="text-[9px] font-bold" style={{ color: isCurrentMonth ? '#C9A962' : 'rgba(247,245,241,0.4)' }}>{m.count}</p>
+                      <div
+                        className="w-full rounded-t-lg trend-bar"
+                        style={{
+                          height: `${Math.max(pct, m.count === 0 ? 0 : 8)}%`,
+                          background: isCurrentMonth
+                            ? 'linear-gradient(180deg, #C9A962, #b8973f)'
+                            : 'rgba(201,169,98,0.3)',
+                          minHeight: m.count > 0 ? 4 : 0,
+                        }}
+                      />
+                      <p className="text-[9px] text-[#F7F5F1]/35 font-semibold">{m.label}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 pt-3 flex justify-between text-xs" style={{ borderTop: '1px solid rgba(201,169,98,0.1)' }}>
+                <span className="text-[#F7F5F1]/40">Összköltség (6 hónap)</span>
+                <span className="font-bold text-[#C9A962]">{hufFmt(monthlyTrend.reduce((s, m) => s + m.cost, 0)) ?? '0 Ft'}</span>
+              </div>
+            </div>
+
             {/* Service type breakdown */}
             <div className="rounded-2xl p-5 card-glass">
-              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><BarChart3 size={15} className="text-[#C9A962]" /> Szerviz típusok</h3>
-              <div className="space-y-2">
+              <h3 className="text-sm font-bold text-[#F7F5F1]/80 mb-4 flex items-center gap-2"><BarChart3 size={15} className="text-[#C9A962]" /> Szerviz típusok</h3>
+              <div className="space-y-3">
                 {(["olajcsere", "gumicsere", "muszaki_vizsga", "szerviz_altalanos", "fekbetisztitas", "futomu_frissites", "tomegkozlekedesi_engedely", "egyeb"] as ServiceRecordType[]).map((type) => {
                   const count = records.filter((r) => r.type === type).length;
                   const pct = records.length ? Math.round(count / records.length * 100) : 0;
@@ -1216,11 +1586,11 @@ export default function GroupLeaderDashboardClient() {
                   if (count === 0) return null;
                   return (
                     <div key={type}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-[#F7F5F1]/60">{getServiceTypeLabel(type)}</span>
-                        <span style={{ color }}>{count} db ({pct}%)</span>
+                      <div className="flex justify-between text-xs mb-1.5">
+                        <span className="text-[#F7F5F1]/70 font-medium">{getServiceTypeLabel(type)}</span>
+                        <span className="font-bold" style={{ color }}>{count} db ({pct}%)</span>
                       </div>
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
+                      <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
                         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
                       </div>
                     </div>
@@ -1229,26 +1599,49 @@ export default function GroupLeaderDashboardClient() {
               </div>
             </div>
 
+            {/* Per-vehicle breakdown */}
+            {perVehicleStats.filter((v) => v.count > 0).length > 0 && (
+              <div className="rounded-2xl p-5 card-glass">
+                <h3 className="text-sm font-bold text-[#F7F5F1]/80 mb-4 flex items-center gap-2">
+                  <Truck size={15} className="text-[#C9A962]" /> Szervizek járművenként
+                </h3>
+                <div className="space-y-3">
+                  {perVehicleStats.filter((v) => v.count > 0).map((v, i) => {
+                    const maxCount = Math.max(...perVehicleStats.map((x) => x.count), 1);
+                    const pct = (v.count / maxCount) * 100;
+                    return (
+                      <div key={i}>
+                        <div className="flex justify-between text-xs mb-1.5">
+                          <span className="text-[#F7F5F1]/70 font-medium truncate max-w-[60%]">{v.name}{v.plates ? ` · ${v.plates}` : ''}</span>
+                          <span className="font-bold text-[#C9A962]">{v.count} szerviz · {hufFmt(v.cost) ?? '0 Ft'}</span>
+                        </div>
+                        <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg, #C9A962, #b8973f)' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Cost summary */}
             <div className="rounded-2xl p-5 card-glass">
-              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><TrendingUp size={15} className="text-[#C9A962]" /> Szerviz költségek</h3>
+              <h3 className="text-sm font-bold text-[#F7F5F1]/80 mb-4 flex items-center gap-2"><Zap size={15} className="text-[#C9A962]" /> Összesítő</h3>
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs text-[#F7F5F1]/40">Összes költség</p>
-                  <p className="text-lg font-bold text-[#C9A962] mt-1">{hufFmt(serviceStats.totalCost) ?? "0 Ft"}</p>
-                </div>
-                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs text-[#F7F5F1]/40">Rekordok száma</p>
-                  <p className="text-lg font-bold text-[#C9A962] mt-1">{serviceStats.total}</p>
-                </div>
-                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs text-[#F7F5F1]/40">Átlagos cost/rekord</p>
-                  <p className="text-base font-bold text-[#C9A962] mt-1">{serviceStats.total ? hufFmt(Math.round(serviceStats.totalCost / serviceStats.total)) ?? "—" : "—"}</p>
-                </div>
-                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs text-[#F7F5F1]/40">Szabadságkérelmek</p>
-                  <p className="text-base font-bold text-[#fbbf24] mt-1">{leaves.length} db</p>
-                </div>
+                {[
+                  { label: 'Összes szerviz', value: serviceStats.total, color: '#C9A962' },
+                  { label: 'Összes költség', value: hufFmt(serviceStats.totalCost) ?? '0 Ft', color: '#C9A962' },
+                  { label: 'Átlag/szerviz', value: serviceStats.total ? hufFmt(Math.round(serviceStats.totalCost / serviceStats.total)) ?? '—' : '—', color: '#C9A962' },
+                  { label: 'Szabadságkérelmek', value: `${leaves.length} db`, color: '#fbbf24' },
+                  { label: 'Lejárt szerviz', value: `${serviceStats.overdue} db`, color: serviceStats.overdue > 0 ? '#fb7185' : '#34d399' },
+                  { label: 'Hamarosan esedékes', value: `${serviceStats.dueSoon} db`, color: serviceStats.dueSoon > 0 ? '#fbbf24' : '#34d399' },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <p className="text-[10px] text-[#F7F5F1]/40 uppercase tracking-wider">{s.label}</p>
+                    <p className="text-base font-black mt-1" style={{ color: s.color }}>{s.value}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -1298,6 +1691,36 @@ export default function GroupLeaderDashboardClient() {
           </div>
         )}
       </main>
+
+      {/* ── BOTTOM NAVIGATION BAR (mobile-first) ── */}
+      <nav className="bottom-nav lg:hidden">
+        {([
+          { id: 'overview' as NavSection, label: 'Áttekintés', icon: Home },
+          { id: 'vehicles' as NavSection, label: 'Járművek', icon: Truck, badge: stats.broken > 0 ? stats.broken : undefined },
+          { id: 'service' as NavSection, label: 'Szerviz', icon: Wrench, badge: serviceStats.overdue > 0 ? serviceStats.overdue : undefined },
+          { id: 'leaves' as NavSection, label: 'Szabadság', icon: Calendar, badge: pendingLeaves > 0 ? pendingLeaves : undefined },
+          { id: 'alerts' as NavSection, label: 'Riasztás', icon: Bell, badge: alertItems.filter(a => a.tone === 'critical').length > 0 ? alertItems.filter(a => a.tone === 'critical').length : undefined },
+        ]).map((item) => (
+          <button
+            key={item.id}
+            onClick={() => navigate(item.id)}
+            className={`bottom-nav-item ${activeSection === item.id ? 'active' : ''}`}
+          >
+            <div className="relative">
+              <item.icon size={activeSection === item.id ? 20 : 18} />
+              {item.badge != null && (
+                <span
+                  className="absolute -top-1.5 -right-2.5 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center"
+                  style={{ background: '#f43f5e', color: 'white' }}
+                >
+                  {item.badge}
+                </span>
+              )}
+            </div>
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
       {/* ── Toast ── */}
       {toast && (

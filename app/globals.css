@@ -218,3 +218,95 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ── Bottom Navigation Bar ── */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  background: rgba(11, 26, 42, 0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(201,169,98,0.18);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 4px 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(247,245,241,0.38);
+  transition: color 0.18s ease, background 0.18s ease;
+  position: relative;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  -webkit-tap-highlight-color: transparent;
+}
+.bottom-nav-item.active {
+  color: #C9A962;
+}
+.bottom-nav-item.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 20%; right: 20%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #C9A962, transparent);
+  border-radius: 0 0 4px 4px;
+}
+
+/* ── Live dot ── */
+@keyframes live-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.65); }
+}
+.live-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: live-dot 1.4s ease-in-out infinite;
+  display: inline-block;
+  box-shadow: 0 0 6px rgba(16,185,129,0.7);
+}
+
+/* ── Countdown urgent pulse ── */
+@keyframes urgent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244,63,94,0.5); }
+  60%       { box-shadow: 0 0 0 6px rgba(244,63,94,0); }
+}
+.urgent-pulse {
+  animation: urgent-pulse 1.8s ease-in-out infinite;
+}
+
+/* ── Slide in from right ── */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.4s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+/* ── Quick action hover glow ── */
+.qa-card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.qa-card:hover, .qa-card:active {
+  transform: scale(1.03) translateY(-2px);
+  box-shadow: 0 8px 28px -8px rgba(201,169,98,0.25);
+}
+
+/* ── Trend bar ── */
+.trend-bar {
+  transition: height 0.6s cubic-bezier(0.16,1,0.3,1);
+}
+
