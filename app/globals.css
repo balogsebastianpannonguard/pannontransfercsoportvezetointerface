@@ -193,3 +193,28 @@ body {
   );
   animation: scanline 8s linear infinite;
 }
+
+@keyframes welcome-in {
+  0% { opacity: 0; transform: scale(0.95) translateY(12px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.animate-welcome-in {
+  animation: welcome-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-count-up {
+  animation: count-up 0.4s ease-out both;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

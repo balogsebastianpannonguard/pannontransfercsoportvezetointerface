@@ -1,44 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  CarFront,
-  Search,
-  MapPin,
-  ShieldCheck,
-  AlertTriangle,
-  LogOut,
-  Users,
-  Hash,
-  Palette,
-  Activity,
-  RefreshCw,
-  Check,
-  Plus,
-  Wrench,
-  Droplets,
-  CircleDot,
-  Calendar,
-  Gauge,
-  ChevronRight,
-  ChevronDown,
-  Pencil,
-  Trash2,
-  ClipboardCheck,
-  FileText,
-  ArrowRight,
-  Clock,
-  Sparkles,
-  X,
+  Activity, AlertTriangle, Bell, Calendar, Car, CarFront, Check,
+  CheckCircle2, ChevronDown, ChevronRight, CircleDot, ClipboardCheck,
+  Clock, Droplets, FileText, Gauge, Hash, Home, LogOut, Menu,
+  Palette, Pencil, Plus, RefreshCw, Search, ShieldCheck, Sparkles,
+  Trash2, TrendingUp, Truck, Users, Wrench, X, XCircle, MapPin,
+  ArrowRight, BarChart3, Zap, Star, Coffee,
 } from "lucide-react";
 import ServiceRecordModal from "./ServiceRecordModal";
 import { getServiceTypeLabel } from "../../lib/serviceTypes";
 import type { ServiceRecordType, ServiceRecordMeta } from "../../lib/serviceTypes";
-type ServiceRecord = ServiceRecordMeta & { _id?: unknown };
 
+type ServiceRecord = ServiceRecordMeta & { _id?: unknown };
 type VehicleStatus = "parked" | "on_route";
 type VehicleCondition = "working" | "debrecen_only" | "not_working";
+type LeaveStatus = "pending" | "approved" | "rejected";
+type LeaveType = "fizetett" | "betegseg" | "rendkivuli" | "egyeb";
+type NavSection = "overview" | "vehicles" | "service" | "oil" | "tires" | "leaves" | "stats" | "alerts";
 
 interface Vehicle {
   _id: string;
@@ -61,44 +42,53 @@ interface UserSession {
   company?: string;
 }
 
-type Tab = "vehicles" | "service" | "oil" | "tires";
+interface LeaveRequest {
+  _id: string;
+  driverName: string;
+  driverEmail?: string;
+  driverPhone?: string;
+  vehicleName?: string;
+  type: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason?: string;
+  status: LeaveStatus;
+  reviewedBy?: string;
+  reviewedAt?: number;
+  reviewNote?: string;
+  createdAt: number;
+}
 
-const CONDITION_META: Record<
-  VehicleCondition,
-  { label: string; icon: any; textColor: string; backgroundColor: string; borderColor: string; dot: string }
-> = {
-  working: {
-    label: "Működik",
-    icon: ShieldCheck,
-    textColor: "#10b981",
-    backgroundColor: "rgba(16,185,129,0.12)",
-    borderColor: "rgba(16,185,129,0.25)",
-    dot: "#10b981",
-  },
-  debrecen_only: {
-    label: "Csak Debrecen",
-    icon: MapPin,
-    textColor: "#f59e0b",
-    backgroundColor: "rgba(245,158,11,0.12)",
-    borderColor: "rgba(245,158,11,0.25)",
-    dot: "#f59e0b",
-  },
-  not_working: {
-    label: "Nem működik",
-    icon: AlertTriangle,
-    textColor: "#f43f5e",
-    backgroundColor: "rgba(244,63,94,0.12)",
-    borderColor: "rgba(244,63,94,0.25)",
-    dot: "#f43f5e",
-  },
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  fizetett: "Fizetett szabadság",
+  betegseg: "Betegszabadság",
+  rendkivuli: "Rendkívüli szabadság",
+  egyeb: "Egyéb",
 };
 
-const statusMeta: Record<VehicleStatus, { label: string; dot: string; textColor: string }> = {
-  parked: { label: "Parkolt", dot: "#94a3b8", textColor: "#cbd5e1" },
-  on_route: { label: "Úton", dot: "#3b82f6", textColor: "#93c5fd" },
+const LEAVE_TYPE_COLORS: Record<LeaveType, { bg: string; text: string; border: string }> = {
+  fizetett: { bg: "rgba(59,130,246,0.15)", text: "#93c5fd", border: "rgba(59,130,246,0.3)" },
+  betegseg: { bg: "rgba(245,158,11,0.15)", text: "#fbbf24", border: "rgba(245,158,11,0.3)" },
+  rendkivuli: { bg: "rgba(244,63,94,0.15)", text: "#fb7185", border: "rgba(244,63,94,0.3)" },
+  egyeb: { bg: "rgba(148,163,184,0.15)", text: "#94a3b8", border: "rgba(148,163,184,0.3)" },
 };
 
-const typeIconMap: Record<ServiceRecordType, any> = {
+const LEAVE_STATUS_META: Record<LeaveStatus, { label: string; bg: string; text: string; border: string; icon: any }> = {
+  pending: { label: "Függőben", bg: "rgba(245,158,11,0.15)", text: "#fbbf24", border: "rgba(245,158,11,0.3)", icon: Clock },
+  approved: { label: "Jóváhagyva", bg: "rgba(16,185,129,0.15)", text: "#34d399", border: "rgba(16,185,129,0.3)", icon: CheckCircle2 },
+  rejected: { label: "Elutasítva", bg: "rgba(244,63,94,0.15)", text: "#fb7185", border: "rgba(244,63,94,0.3)", icon: XCircle },
+};
+
+const CONDITION_META: Record<VehicleCondition, { label: string; textColor: string; bg: string; border: string; dot: string }> = {
+  working: { label: "Működik", textColor: "#10b981", bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.25)", dot: "#10b981" },
+  debrecen_only: { label: "Csak Debrecen", textColor: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.25)", dot: "#f59e0b" },
+  not_working: { label: "Nem működik", textColor: "#f43f5e", bg: "rgba(244,63,94,0.12)", border: "rgba(244,63,94,0.25)", dot: "#f43f5e" },
+};
+
+const SERVICE_TYPE_ICONS: Record<ServiceRecordType, any> = {
   olajcsere: Droplets,
   gumicsere: CircleDot,
   muszaki_vizsga: ClipboardCheck,
@@ -109,15 +99,36 @@ const typeIconMap: Record<ServiceRecordType, any> = {
   egyeb: FileText,
 };
 
-function formatDate(d?: string) {
+const SERVICE_TYPE_COLORS: Record<ServiceRecordType, string> = {
+  olajcsere: "#f59e0b",
+  gumicsere: "#3b82f6",
+  muszaki_vizsga: "#10b981",
+  szerviz_altalanos: "#8b5cf6",
+  fekbetisztitas: "#06b6d4",
+  futomu_frissites: "#f97316",
+  tomegkozlekedesi_engedely: "#ec4899",
+  egyeb: "#94a3b8",
+};
+
+const NAV_ITEMS: { id: NavSection; label: string; icon: any; badge?: string }[] = [
+  { id: "overview", label: "Áttekintés", icon: Home },
+  { id: "vehicles", label: "Járműpark", icon: Truck },
+  { id: "service", label: "Szerviznapló", icon: Wrench },
+  { id: "oil", label: "Olajcserék", icon: Droplets },
+  { id: "tires", label: "Gumikezelés", icon: CircleDot },
+  { id: "leaves", label: "Szabadságok", icon: Calendar },
+  { id: "stats", label: "Statisztikák", icon: BarChart3 },
+  { id: "alerts", label: "Figyelmeztetések", icon: Bell },
+];
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtDate(d?: string) {
   if (!d) return "—";
   try {
     const [y, m, day] = d.split("-");
-    if (!y || !m || !day) return d;
     return `${y}. ${Number(m)}. ${Number(day)}.`;
-  } catch {
-    return d;
-  }
+  } catch { return d; }
 }
 
 function daysUntil(date?: string): number | null {
@@ -125,221 +136,171 @@ function daysUntil(date?: string): number | null {
   const target = new Date(date + "T00:00:00");
   const now = new Date();
   now.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((target.getTime() - now.getTime()) / 86400000);
 }
 
-function kmNumber(v?: number): string {
+function kmFmt(v?: number) {
   if (v == null || isNaN(v)) return "—";
-  try {
-    return new Intl.NumberFormat("hu-HU").format(v) + " km";
-  } catch {
-    return String(v) + " km";
-  }
+  return new Intl.NumberFormat("hu-HU").format(v) + " km";
 }
 
-const huf = (v?: number) => {
+function hufFmt(v?: number) {
   if (v == null || isNaN(v)) return null;
-  try {
-    return new Intl.NumberFormat("hu-HU").format(v) + " Ft";
-  } catch {
-    return String(v) + " Ft";
-  }
-};
-
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 11) return "Jó reggelt";
-  if (hour < 18) return "Szép napot";
-  return "Jó estét";
+  return new Intl.NumberFormat("hu-HU").format(v) + " Ft";
 }
 
-function getToneStyles(tone: "critical" | "warn" | "ok" | "info") {
-  if (tone === "critical") {
-    return {
-      bg: "rgba(244,63,94,0.16)",
-      border: "rgba(244,63,94,0.24)",
-      color: "#fb7185",
-    };
-  }
-  if (tone === "warn") {
-    return {
-      bg: "rgba(245,158,11,0.16)",
-      border: "rgba(245,158,11,0.24)",
-      color: "#fbbf24",
-    };
-  }
-  if (tone === "info") {
-    return {
-      bg: "rgba(59,130,246,0.16)",
-      border: "rgba(59,130,246,0.24)",
-      color: "#93c5fd",
-    };
-  }
-  return {
-    bg: "rgba(16,185,129,0.16)",
-    border: "rgba(16,185,129,0.24)",
-    color: "#34d399",
-  };
+function getGreeting(name: string) {
+  const h = new Date().getHours();
+  const firstName = name.split(" ")[0];
+  if (h < 11) return `Jó reggelt, ${firstName}!`;
+  if (h < 18) return `Szép napot, ${firstName}!`;
+  return `Jó estét, ${firstName}!`;
 }
 
-function getVehiclePriority(vehicle: Vehicle, upcomingDays: number | null | undefined, recordCount: number) {
-  if (vehicle.condition === "not_working") {
-    return {
-      score: 120,
-      tone: "critical" as const,
-      label: "Azonnali figyelem",
-      detail: "A jarmu jelenleg nem mukodik.",
-    };
-  }
-  if (upcomingDays != null && upcomingDays < 0) {
-    return {
-      score: 112,
-      tone: "critical" as const,
-      label: "Lejart ellenorzes",
-      detail: `${-upcomingDays} napja lejart kovetkezo ellenorzes.`,
-    };
-  }
-  if (upcomingDays != null && upcomingDays <= 7) {
-    return {
-      score: 96,
-      tone: "warn" as const,
-      label: "Hamarosan esedekes",
-      detail: `${upcomingDays} napon belul kovetkezo ellenorzes.`,
-    };
-  }
-  if (recordCount === 0) {
-    return {
-      score: 72,
-      tone: "info" as const,
-      label: "Hianyos elozmeny",
-      detail: "Ehhez a jarmuhoz meg nincs szerviznaplo.",
-    };
-  }
-  if (vehicle.condition === "debrecen_only") {
-    return {
-      score: 48,
-      tone: "warn" as const,
-      label: "Korlatozott hasznalat",
-      detail: "Debrecen belso hasznalatra korlatozott.",
-    };
-  }
-  if (vehicle.status === "on_route") {
-    return {
-      score: 34,
-      tone: "ok" as const,
-      label: "Aktiv futasban",
-      detail: "A jarmu most utban van.",
-    };
-  }
-  return {
-    score: 12,
-    tone: "ok" as const,
-    label: "Rendben",
-    detail: "Jelenleg nincs surgos teendo.",
-  };
+function getMotivation() {
+  const msgs = [
+    "Ma is minden rendben fog menni. 💪",
+    "A flotta kezekben van! 🚗",
+    "Hatékony napot! ⚡",
+    "Minden szerviznapló naprakész? 📋",
+    "Biztonságos utakat kíván a Pannon Transfer! 🛡️",
+  ];
+  return msgs[new Date().getDate() % msgs.length];
 }
+
+function urgencyBadge(days: number | null) {
+  if (days == null) return null;
+  if (days < 0) return { label: `${-days} napja lejárt`, color: "#fb7185", bg: "rgba(244,63,94,0.18)" };
+  if (days === 0) return { label: "MA esedékes!", color: "#fb7185", bg: "rgba(244,63,94,0.18)" };
+  if (days <= 7) return { label: `${days} nap múlva`, color: "#fbbf24", bg: "rgba(245,158,11,0.18)" };
+  if (days <= 30) return { label: `${days} nap múlva`, color: "#34d399", bg: "rgba(16,185,129,0.12)" };
+  return null;
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function GroupLeaderDashboardClient() {
   const router = useRouter();
+
+  // Core state
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [records, setRecords] = useState<ServiceRecord[]>([]);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [user, setUser] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Navigation
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<NavSection>("overview");
+
+  // Welcome Story
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomePhase, setWelcomePhase] = useState<"in" | "show" | "out">("in");
+
+  // Search & filters
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | VehicleStatus>("all");
-  const [conditionFilter, setConditionFilter] = useState<"all" | VehicleCondition>("all");
-  const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [showMenu, setShowMenu] = useState(false);
-  const [tab, setTab] = useState<Tab>("vehicles");
+  const [vehicleCondFilter, setVehicleCondFilter] = useState<"all" | VehicleCondition>("all");
+  const [leaveFilter, setLeaveFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+
+  // Vehicle expansion
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null);
 
-  // Modal
+  // Modals
   const [modalOpen, setModalOpen] = useState(false);
   const [modalVehicleId, setModalVehicleId] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<"main" | "oil" | "tire">("main");
   const [modalEditing, setModalEditing] = useState<ServiceRecord | null>(null);
-
-  // Record deletion confirm
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
 
-  const showToast = (ok: boolean, msg: string) => {
+  // Leave review modal
+  const [reviewLeave, setReviewLeave] = useState<LeaveRequest | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+
+  // Toast
+  const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const showToast = useCallback((ok: boolean, msg: string) => {
     setToast({ ok, msg });
-    window.setTimeout(() => setToast(null), 2800);
-  };
+    setTimeout(() => setToast(null), 3000);
+  }, []);
 
-  const fetchSession = async () => {
-    try {
-      const res = await fetch("/api/auth/session", { cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (data?.authenticated && data?.user) {
-        setUser(data.user);
-      }
-    } catch {}
-  };
+  // ── Welcome Story ──────────────────────────────────────────────────────────
 
-  const fetchAll = async (showToastSuccess = false) => {
-    setLoading(true);
+  useEffect(() => {
+    const key = "pannon_welcome_shown_" + new Date().toDateString();
+    if (!sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, "1");
+      setShowWelcome(true);
+      setWelcomePhase("in");
+      setTimeout(() => setWelcomePhase("show"), 100);
+      setTimeout(() => setWelcomePhase("out"), 2200);
+      setTimeout(() => setShowWelcome(false), 2700);
+    }
+  }, []);
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
+
+  const fetchAll = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const [vRes, rRes] = await Promise.all([
+      const [vRes, rRes, lRes, sRes] = await Promise.all([
         fetch("/api/vehicles", { cache: "no-store" }),
         fetch("/api/service-records", { cache: "no-store" }),
+        fetch("/api/leave-requests", { cache: "no-store" }),
+        fetch("/api/auth/session", { cache: "no-store" }),
       ]);
       const vData = await vRes.json().catch(() => ({}));
       const rData = await rRes.json().catch(() => ({}));
+      const lData = await lRes.json().catch(() => ({}));
+      const sData = await sRes.json().catch(() => ({}));
+
       if (Array.isArray(vData?.vehicles)) setVehicles(vData.vehicles);
       if (Array.isArray(rData?.records)) setRecords(rData.records);
-      if (showToastSuccess) showToast(true, "Frissítve");
+      if (Array.isArray(lData?.requests)) setLeaves(lData.requests);
+      if (sData?.authenticated && sData?.user) setUser(sData.user);
     } catch {
-      showToast(false, "Hiba a betöltésnél");
+      if (!silent) showToast(false, "Hiba a betöltésnél");
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
-    try {
-      await fetchAll(true);
-    } finally {
-      setRefreshing(false);
-    }
+    await fetchAll(true);
+    setRefreshing(false);
+    showToast(true, "Adatok frissítve");
   };
 
   const handleLogout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {}
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
     router.push("/login");
   };
 
-  useEffect(() => {
-    fetchSession();
-    fetchAll();
-  }, []);
+  // ── Vehicle actions ────────────────────────────────────────────────────────
 
   const patchVehicle = async (id: string, patch: Partial<Vehicle>) => {
-    try {
-      const res = await fetch("/api/vehicles", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ...patch }),
-      });
-      if (res.ok) {
-        setVehicles((prev) => prev.map((v) => (v._id === id ? { ...v, ...patch, updatedAt: Date.now() } : v)));
-        showToast(true, patch.status === "on_route" ? "Úton jelölve" : "Parkolásba rakva");
-        return true;
-      }
-      showToast(false, "Hiba a mentés közben");
-      return false;
-    } catch {
-      showToast(false, "Hálózati hiba");
-      return false;
+    const res = await fetch("/api/vehicles", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, ...patch }),
+    });
+    if (res.ok) {
+      setVehicles((prev) => prev.map((v) => (v._id === id ? { ...v, ...patch, updatedAt: Date.now() } : v)));
+      showToast(true, patch.status === "on_route" ? "Útra küldve" : "Parkoltba helyezve");
+      return true;
     }
+    showToast(false, "Mentési hiba");
+    return false;
   };
 
-  // === SERVICE RECORDS ===
+  // ── Service record actions ─────────────────────────────────────────────────
+
   const openCreate = (vehicleId: string, mode: "main" | "oil" | "tire" = "main") => {
     setModalEditing(null);
     setModalVehicleId(vehicleId);
@@ -355,84 +316,64 @@ export default function GroupLeaderDashboardClient() {
   };
 
   const saveRecord = async (payload: any): Promise<boolean> => {
-    try {
-      const editingId = payload.id;
-      delete payload.id;
-      let res;
-      if (editingId) {
-        const url = new URL("/api/service-records", window.location.origin);
-        url.searchParams.set("id", editingId);
-        res = await fetch(url.toString(), {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        res = await fetch("/api/service-records", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
-      if (res.ok) {
-        showToast(true, editingId ? "Módosítva" : "Rögzítve");
-        await fetchAll();
-        return true;
-      }
-      const j = await res.json().catch(() => ({}));
-      showToast(false, j?.error ?? "Hiba a mentésnél");
-      return false;
-    } catch (e: any) {
-      showToast(false, e?.message ?? "Hálózati hiba");
-      return false;
+    const editingId = payload.id;
+    delete payload.id;
+    let res;
+    if (editingId) {
+      const url = new URL("/api/service-records", window.location.origin);
+      url.searchParams.set("id", editingId);
+      res = await fetch(url.toString(), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    } else {
+      res = await fetch("/api/service-records", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     }
+    if (res.ok) {
+      showToast(true, editingId ? "Módosítva" : "Rögzítve");
+      await fetchAll(true);
+      return true;
+    }
+    const j = await res.json().catch(() => ({}));
+    showToast(false, j?.error ?? "Mentési hiba");
+    return false;
   };
 
   const deleteRecord = async (id: string) => {
-    try {
-      const url = new URL("/api/service-records", window.location.origin);
-      url.searchParams.set("id", id);
-      const res = await fetch(url.toString(), { method: "DELETE" });
-      if (res.ok) {
-        showToast(true, "Törölve");
-        setRecords((prev) => prev.filter((r) => String(r._id) !== id));
-        return true;
-      }
-      showToast(false, "Nem sikerült törölni");
-      return false;
-    } catch {
-      showToast(false, "Hálózati hiba");
-      return false;
-    } finally {
+    const url = new URL("/api/service-records", window.location.origin);
+    url.searchParams.set("id", id);
+    const res = await fetch(url.toString(), { method: "DELETE" });
+    if (res.ok) {
+      showToast(true, "Törölve");
+      setRecords((prev) => prev.filter((r) => String(r._id) !== id));
       setDeletingRecordId(null);
+      return true;
     }
+    showToast(false, "Törlési hiba");
+    setDeletingRecordId(null);
+    return false;
   };
 
-  // === DERIVED DATA ===
-  const stats = useMemo(() => {
-    const total = vehicles.length;
-    const onRoute = vehicles.filter((v) => v.status === "on_route").length;
-    const working = vehicles.filter((v) => v.condition === "working").length;
-    const broken = vehicles.filter((v) => v.condition === "not_working").length;
-    return { total, onRoute, working, broken };
-  }, [vehicles]);
+  // ── Leave actions ──────────────────────────────────────────────────────────
 
-  const serviceStats = useMemo(() => {
-    const today = new Date();
-    const future = (d?: string) => {
-      if (!d) return false;
-      const t = new Date(d + "T00:00:00");
-      const diff = Math.round((t.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      return diff <= 30;
-    };
-    const totalRecords = records.length;
-    const oilCount = records.filter((r) => r.type === "olajcsere").length;
-    const tireCount = records.filter((r) => r.type === "gumicsere").length;
-    const upcoming = records.filter(
-      (r) => future(r.nextCheckDate)
-    ).length;
-    return { totalRecords, oilCount, tireCount, upcoming };
-  }, [records]);
+  const handleLeaveReview = async (leaveId: string, status: "approved" | "rejected") => {
+    setReviewSubmitting(true);
+    const url = new URL("/api/leave-requests", window.location.origin);
+    url.searchParams.set("id", leaveId);
+    const res = await fetch(url.toString(), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, reviewNote }),
+    });
+    if (res.ok) {
+      showToast(true, status === "approved" ? "Szabadság jóváhagyva ✓" : "Szabadság elutasítva");
+      setLeaves((prev) => prev.map((l) => l._id === leaveId ? { ...l, status, reviewNote } : l));
+      setReviewLeave(null);
+      setReviewNote("");
+    } else {
+      showToast(false, "Hiba a feldolgozás során");
+    }
+    setReviewSubmitting(false);
+  };
+
+  // ── Derived data ───────────────────────────────────────────────────────────
 
   const recordsByVehicle = useMemo(() => {
     const map = new Map<string, ServiceRecord[]>();
@@ -441,1453 +382,1011 @@ export default function GroupLeaderDashboardClient() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
-    for (const [k, list] of map.entries()) {
-      list.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
-      map.set(k, list);
-    }
-    return map;
-  }, [records]);
-
-  const upcomingByVehicle = useMemo(() => {
-    const map = new Map<string, { record: ServiceRecord; days: number | null }>();
-    for (const r of records) {
-      const d = daysUntil(r.nextCheckDate);
-      if (d == null) continue;
-      if (d > 60) continue;
-      const key = String(r.vehicleId);
-      const cur = map.get(key);
-      if (!cur || (cur.days ?? 99999) > d) map.set(key, { record: r, days: d });
-    }
-    return map;
-  }, [records]);
-
-  const lastServiceByVehicle = useMemo(() => {
-    const map = new Map<string, ServiceRecord>();
-    for (const r of records) {
-      const key = String(r.vehicleId);
-      const cur = map.get(key);
-      if (!cur || (cur.date ?? "") < (r.date ?? "")) map.set(key, r);
-    }
     return map;
   }, [records]);
 
   const vehicleCards = useMemo(() => {
     return vehicles.map((vehicle) => {
-      const vehicleRecords = recordsByVehicle.get(vehicle._id) ?? [];
-      const upcoming = upcomingByVehicle.get(vehicle._id);
-      const lastRecord = lastServiceByVehicle.get(vehicle._id);
-      const priority = getVehiclePriority(vehicle, upcoming?.days, vehicleRecords.length);
-      return {
-        vehicle,
-        records: vehicleRecords,
-        upcoming,
-        lastRecord,
-        priority,
-      };
+      const vRecords = recordsByVehicle.get(vehicle._id) ?? [];
+      const sorted = [...vRecords].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+      const upcoming = sorted.reduce<{ record: ServiceRecord; days: number } | null>((best, r) => {
+        const d = daysUntil(r.nextCheckDate);
+        if (d == null || d > 60) return best;
+        if (!best || d < best.days) return { record: r, days: d };
+        return best;
+      }, null);
+      const lastRecord = sorted[0] ?? null;
+      return { vehicle, records: vRecords, upcoming, lastRecord };
     });
-  }, [vehicles, recordsByVehicle, upcomingByVehicle, lastServiceByVehicle]);
+  }, [vehicles, recordsByVehicle]);
 
-  const fleetPulse = useMemo(() => {
-    const total = vehicleCards.length;
-    const availableNow = vehicleCards.filter(
-      ({ vehicle }) => vehicle.status === "parked" && vehicle.condition === "working"
-    ).length;
-    const urgentCount = vehicleCards.filter(({ priority }) => priority.score >= 90).length;
-    const needsHistory = vehicleCards.filter(({ records }) => records.length === 0).length;
-    const healthScore = total ? Math.round((stats.working / total) * 100) : 0;
-    const utilization = total ? Math.round((stats.onRoute / total) * 100) : 0;
-    return { total, availableNow, urgentCount, needsHistory, healthScore, utilization };
-  }, [vehicleCards, stats]);
+  const stats = useMemo(() => ({
+    total: vehicles.length,
+    onRoute: vehicles.filter((v) => v.status === "on_route").length,
+    working: vehicles.filter((v) => v.condition === "working").length,
+    broken: vehicles.filter((v) => v.condition === "not_working").length,
+    parked: vehicles.filter((v) => v.status === "parked").length,
+  }), [vehicles]);
 
-  const topPriorityVehicle = useMemo(() => {
-    return [...vehicleCards]
-      .sort((a, b) => b.priority.score - a.priority.score || a.vehicle.name.localeCompare(b.vehicle.name, "hu"))
-      .at(0) ?? null;
-  }, [vehicleCards]);
-
-  const servicePulse = useMemo(() => {
-    const deadlines = records
-      .map((record) => ({
-        record,
-        days: daysUntil(record.nextCheckDate),
-      }))
-      .filter((item) => item.days != null);
-
-    const overdue = deadlines.filter((item) => (item.days ?? 0) < 0).length;
-    const dueSoon = deadlines.filter((item) => (item.days ?? 9999) >= 0 && (item.days ?? 9999) <= 14).length;
-    const recent = records.filter((record) => {
-      const date = record.date ? new Date(record.date + "T00:00:00") : null;
-      if (!date) return false;
-      const diff = Date.now() - date.getTime();
-      return diff <= 1000 * 60 * 60 * 24 * 30;
-    }).length;
-    const totalCost = records.reduce((sum, record) => sum + (typeof record.costHUF === "number" ? record.costHUF : 0), 0);
-
-    const nextAlert =
-      [...deadlines].sort((a, b) => (a.days ?? 9999) - (b.days ?? 9999))[0] ?? null;
-
-    return { overdue, dueSoon, recent, totalCost, nextAlert };
+  const serviceStats = useMemo(() => {
+    const overdue = records.filter((r) => { const d = daysUntil(r.nextCheckDate); return d != null && d < 0; }).length;
+    const dueSoon = records.filter((r) => { const d = daysUntil(r.nextCheckDate); return d != null && d >= 0 && d <= 14; }).length;
+    const oilCount = records.filter((r) => r.type === "olajcsere").length;
+    const tireCount = records.filter((r) => r.type === "gumicsere").length;
+    const totalCost = records.reduce((s, r) => s + (typeof r.costHUF === "number" ? r.costHUF : 0), 0);
+    return { total: records.length, overdue, dueSoon, oilCount, tireCount, totalCost };
   }, [records]);
 
-  // Tab specific data
-  const filteredVehicles = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return vehicleCards
-      .filter(({ vehicle }) => {
-        if (statusFilter !== "all" && vehicle.status !== statusFilter) return false;
-        if (conditionFilter !== "all" && vehicle.condition !== conditionFilter) return false;
-        if (!q) return true;
-        return [vehicle.name, vehicle.type, vehicle.plates, vehicle.color, vehicle.note]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
-      })
-      .sort((a, b) => {
-        if (b.priority.score !== a.priority.score) return b.priority.score - a.priority.score;
-        const aUpcoming = a.upcoming?.days ?? 9999;
-        const bUpcoming = b.upcoming?.days ?? 9999;
-        if (aUpcoming !== bUpcoming) return aUpcoming - bUpcoming;
-        return a.vehicle.name.localeCompare(b.vehicle.name, "hu");
-      });
-  }, [vehicleCards, search, statusFilter, conditionFilter]);
+  const pendingLeaves = useMemo(() => leaves.filter((l) => l.status === "pending").length, [leaves]);
 
-  const serviceFilteredRecords = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = [...records];
-    if (tab === "oil") list = list.filter((r) => r.type === "olajcsere");
-    if (tab === "tires") list = list.filter((r) => r.type === "gumicsere");
-    if (q) {
-      list = list.filter((r) => {
-        const haystack = [
-          r.title,
-          r.type,
-          r.notes,
-          r.vehicleName,
-          r.vehiclePlateNumber,
-          r.servicePartner,
-          r.date,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(q);
-      });
-    }
-    return list.sort((a, b) => {
-      const aDays = daysUntil(a.nextCheckDate);
-      const bDays = daysUntil(b.nextCheckDate);
-      const aScore = aDays == null ? 0 : aDays < 0 ? 3 : aDays <= 14 ? 2 : 1;
-      const bScore = bDays == null ? 0 : bDays < 0 ? 3 : bDays <= 14 ? 2 : 1;
-      if (bScore !== aScore) return bScore - aScore;
-      return (b.date ?? "").localeCompare(a.date ?? "");
+  const filteredLeaves = useMemo(() => {
+    let list = [...leaves];
+    if (leaveFilter !== "all") list = list.filter((l) => l.status === leaveFilter);
+    if (search) list = list.filter((l) => [l.driverName, l.reason, LEAVE_TYPE_LABELS[l.type]].join(" ").toLowerCase().includes(search.toLowerCase()));
+    return list.sort((a, b) => b.createdAt - a.createdAt);
+  }, [leaves, leaveFilter, search]);
+
+  const filteredVehicleCards = useMemo(() => {
+    const q = search.toLowerCase();
+    return vehicleCards.filter(({ vehicle }) => {
+      if (vehicleCondFilter !== "all" && vehicle.condition !== vehicleCondFilter) return false;
+      if (!q) return true;
+      return [vehicle.name, vehicle.type, vehicle.plates, vehicle.color, vehicle.note].filter(Boolean).join(" ").toLowerCase().includes(q);
     });
-  }, [records, search, tab]);
+  }, [vehicleCards, vehicleCondFilter, search]);
 
-  // ====== RENDER ======
+  const filteredServiceRecords = useMemo(() => {
+    const q = search.toLowerCase();
+    let list = [...records];
+    if (activeSection === "oil") list = list.filter((r) => r.type === "olajcsere");
+    if (activeSection === "tires") list = list.filter((r) => r.type === "gumicsere");
+    if (q) list = list.filter((r) => [r.title, r.vehicleName, r.vehiclePlateNumber, r.notes, r.servicePartner].filter(Boolean).join(" ").toLowerCase().includes(q));
+    return list.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+  }, [records, activeSection, search]);
+
+  const alertItems = useMemo(() => {
+    const items: { label: string; detail: string; tone: "critical" | "warn" | "info"; vehicleName?: string; days?: number }[] = [];
+    for (const { vehicle, upcoming, records: vRecs } of vehicleCards) {
+      if (vehicle.condition === "not_working") {
+        items.push({ label: vehicle.name, detail: "Jármű nem működik — azonnali figyelem szükséges!", tone: "critical", vehicleName: vehicle.name });
+      }
+      if (upcoming) {
+        const d = upcoming.days;
+        if (d < 0) items.push({ label: vehicle.name, detail: `${getServiceTypeLabel(upcoming.record.type as ServiceRecordType)}: ${-d} napja lejárt`, tone: "critical", vehicleName: vehicle.name, days: d });
+        else if (d <= 7) items.push({ label: vehicle.name, detail: `${getServiceTypeLabel(upcoming.record.type as ServiceRecordType)}: ${d} nap múlva esedékes`, tone: "warn", vehicleName: vehicle.name, days: d });
+        else if (d <= 30) items.push({ label: vehicle.name, detail: `${getServiceTypeLabel(upcoming.record.type as ServiceRecordType)}: ${d} nap múlva esedékes`, tone: "info", vehicleName: vehicle.name, days: d });
+      }
+      if (vRecs.length === 0) {
+        items.push({ label: vehicle.name, detail: "Nincs szerviznapló rögzítve ehhez a járműhöz", tone: "info", vehicleName: vehicle.name });
+      }
+    }
+    if (pendingLeaves > 0) {
+      items.push({ label: `${pendingLeaves} szabadságkérelem`, detail: "Döntésre vár — tekintsd meg a Szabadságok szekciót", tone: "warn" });
+    }
+    return items.sort((a, b) => (a.tone === "critical" ? -1 : b.tone === "critical" ? 1 : a.tone === "warn" ? -1 : 1));
+  }, [vehicleCards, pendingLeaves]);
+
+  // ── Navigate helper ────────────────────────────────────────────────────────
+  const navigate = (section: NavSection) => {
+    setActiveSection(section);
+    setSidebarOpen(false);
+    setSearch("");
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const displayName = user?.name || "Gábor";
+
+  // Loading skeleton
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0B1A2A" }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-2 border-[#C9A962]/30 border-t-[#C9A962] rounded-full animate-spin" />
+          <p className="text-[#C9A962]/70 text-sm tracking-widest uppercase">Betöltés...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="min-h-screen min-h-[100dvh] text-[#F7F5F1] pb-8 relative overflow-x-hidden"
-    >
-      {/* Premium Ambient Background */}
+    <div className="min-h-screen min-h-[100dvh] text-[#F7F5F1] relative overflow-x-hidden">
+      {/* ── Ambient Background ── */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute inset-0 ambient-grid opacity-40" />
-        <div className="absolute inset-0 ambient-scan opacity-30" />
+        <div className="absolute inset-0 ambient-scan opacity-20" />
         <div className="absolute top-[-5%] right-[-10%] w-[380px] h-[380px] bg-[#C9A962]/[0.06] blur-[120px] rounded-full" />
-        <div className="absolute bottom-[10%] left-[-15%] w-[400px] h-[400px] bg-[#1e3a8a]/[0.3] blur-[130px] rounded-full" />
-        <div className="absolute top-[22%] left-[12%] w-[180px] h-[180px] bg-[#C9A962]/[0.05] blur-[80px] rounded-full animate-pulse-glow" />
+        <div className="absolute bottom-[10%] left-[-15%] w-[400px] h-[400px] bg-[#1e3a8a]/[0.25] blur-[130px] rounded-full" />
+        <div className="absolute top-[45%] right-[5%] w-[200px] h-[200px] bg-[#C9A962]/[0.04] blur-[80px] rounded-full animate-pulse-glow" />
       </div>
 
-      {/* Sticky Header */}
-      <header
-        className="sticky top-0 z-40 border-b border-[#C9A962]/10"
-        style={{
-          backgroundColor: "rgba(11,26,42,0.82)",
-          backdropFilter: "blur(22px)",
-          WebkitBackdropFilter: "blur(22px)",
-        }}
-      >
-        <div className="w-full mx-auto px-4 h-[60px] flex items-center justify-between" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-          <div className="flex items-center gap-3">
-            <div className="relative w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden shrink-0 shadow-[0_4px_16px_rgba(201,169,98,0.2)]">
-              <div className="absolute inset-0 gold-gradient" />
-              <CarFront className="relative z-10 w-5 h-5 text-[#0B1A2A]" strokeWidth={2.5} />
+      {/* ── Welcome Story ── */}
+      {showWelcome && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center"
+          style={{
+            background: "rgba(11,26,42,0.97)",
+            backdropFilter: "blur(20px)",
+            opacity: welcomePhase === "in" ? 0 : welcomePhase === "show" ? 1 : 0,
+            transition: "opacity 0.5s ease",
+          }}
+        >
+          <div className="flex flex-col items-center gap-6 text-center px-8" style={{ animation: welcomePhase === "show" ? "slide-up 0.6s cubic-bezier(0.16,1,0.3,1) both" : undefined }}>
+            <div className="w-20 h-20 rounded-2xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #C9A962, #d4bb7a)" }}>
+              <span className="text-3xl font-bold text-[#0B1A2A]">P</span>
             </div>
             <div>
-              <div className="text-[9px] font-black tracking-[0.22em] text-[#C9A962] uppercase flex items-center gap-1">
-                Flotta
+              <p className="text-[#C9A962]/70 text-xs tracking-[4px] uppercase mb-2">Pannon Transfer · Csoportvezető</p>
+              <h1 className="text-3xl font-bold text-[#F7F5F1] mb-1">{getGreeting(displayName)}</h1>
+              <p className="text-[#C9A962]/80 text-base mt-2">{getMotivation()}</p>
+            </div>
+            <div className="flex gap-6 mt-2">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-[#C9A962]">{stats.total}</p>
+                <p className="text-xs text-[#F7F5F1]/50 mt-0.5">Jármű</p>
               </div>
-              <h1 className="text-[17px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] tracking-tight leading-tight">
-                {tab === "vehicles"
-                  ? "Járműlista"
-                  : tab === "service"
-                  ? "Szerviz napló"
-                  : tab === "oil"
-                  ? "Olajcserék"
-                  : "Gumicserék"}
+              <div className="w-px bg-[#C9A962]/20" />
+              <div className="text-center">
+                <p className="text-2xl font-bold" style={{ color: pendingLeaves > 0 ? "#fbbf24" : "#34d399" }}>{pendingLeaves}</p>
+                <p className="text-xs text-[#F7F5F1]/50 mt-0.5">Kérelem</p>
+              </div>
+              <div className="w-px bg-[#C9A962]/20" />
+              <div className="text-center">
+                <p className="text-2xl font-bold" style={{ color: serviceStats.overdue > 0 ? "#fb7185" : "#34d399" }}>{serviceStats.overdue}</p>
+                <p className="text-xs text-[#F7F5F1]/50 mt-0.5">Lejárt</p>
+              </div>
+            </div>
+            <div className="flex gap-1 mt-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-1 rounded-full" style={{ width: i === 0 ? 24 : 8, background: i === 0 ? "#C9A962" : "rgba(201,169,98,0.3)", transition: "all 0.3s" }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sidebar Overlay ── */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* ── Sidebar ── */}
+      <aside
+        className="fixed top-0 left-0 h-full z-50 flex flex-col"
+        style={{
+          width: 280,
+          background: "linear-gradient(180deg, #0d1f32 0%, #0B1A2A 100%)",
+          borderRight: "1px solid rgba(201,169,98,0.15)",
+          transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.35s cubic-bezier(0.16,1,0.3,1)",
+          boxShadow: sidebarOpen ? "4px 0 40px rgba(0,0,0,0.6)" : "none",
+        }}
+      >
+        {/* Sidebar header */}
+        <div className="flex items-center justify-between p-5 border-b" style={{ borderColor: "rgba(201,169,98,0.12)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg,#C9A962,#b8973f)" }}>
+              <span className="text-base font-bold text-[#0B1A2A]">P</span>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-[#C9A962] tracking-widest uppercase">Pannon Transfer</p>
+              <p className="text-[10px] text-[#F7F5F1]/40 mt-0.5">Csoportvezető</p>
+            </div>
+          </div>
+          <button onClick={() => setSidebarOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(201,169,98,0.08)" }}>
+            <X size={16} className="text-[#C9A962]" />
+          </button>
+        </div>
+
+        {/* User info */}
+        <div className="px-5 py-4 border-b" style={{ borderColor: "rgba(201,169,98,0.08)" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold" style={{ background: "rgba(201,169,98,0.15)", color: "#C9A962" }}>
+              {displayName.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-[#F7F5F1]">{displayName}</p>
+              <p className="text-xs text-[#F7F5F1]/40">{user?.email || "csoportvezető"}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex-1 overflow-y-auto py-3 px-3">
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeSection === item.id;
+            const badge = item.id === "leaves" && pendingLeaves > 0 ? pendingLeaves :
+                         item.id === "alerts" && alertItems.filter(a => a.tone === "critical").length > 0 ? alertItems.filter(a => a.tone === "critical").length : null;
+            return (
+              <button
+                key={item.id}
+                onClick={() => navigate(item.id)}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1 text-left transition-all duration-150"
+                style={{
+                  background: isActive ? "rgba(201,169,98,0.15)" : "transparent",
+                  border: isActive ? "1px solid rgba(201,169,98,0.25)" : "1px solid transparent",
+                }}
+              >
+                <item.icon size={18} style={{ color: isActive ? "#C9A962" : "rgba(247,245,241,0.45)" }} />
+                <span className="text-sm flex-1" style={{ color: isActive ? "#C9A962" : "rgba(247,245,241,0.7)", fontWeight: isActive ? 600 : 400 }}>
+                  {item.label}
+                </span>
+                {badge && (
+                  <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ background: "rgba(244,63,94,0.2)", color: "#fb7185" }}>
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Logout */}
+        <div className="p-4 border-t" style={{ borderColor: "rgba(201,169,98,0.12)" }}>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all"
+            style={{ background: "rgba(244,63,94,0.08)", color: "#fb7185", border: "1px solid rgba(244,63,94,0.15)" }}
+          >
+            <LogOut size={16} />
+            <span>Kijelentkezés</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Top Header ── */}
+      <header className="sticky top-0 z-30" style={{ background: "rgba(11,26,42,0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(201,169,98,0.12)" }}>
+        <div className="flex items-center gap-3 px-4 py-3 max-w-7xl mx-auto">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(201,169,98,0.1)", border: "1px solid rgba(201,169,98,0.2)" }}
+          >
+            <Menu size={18} className="text-[#C9A962]" />
+          </button>
+
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div>
+              <p className="text-xs text-[#C9A962]/60 tracking-widest uppercase hidden sm:block">Pannon Transfer</p>
+              <h1 className="text-sm font-semibold text-[#F7F5F1] truncate">
+                {NAV_ITEMS.find((n) => n.id === activeSection)?.label ?? "Csoportvezető"}
               </h1>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="w-10 h-10 rounded-xl border border-[#C9A962]/15 flex items-center justify-center text-[#C9A962] hover:bg-[#C9A962]/10 transition-all active:scale-[0.95] disabled:opacity-50"
-              style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-              title="Frissítés"
-            >
-              <RefreshCw className={`w-[18px] h-[18px] ${refreshing ? "animate-spin" : ""}`} strokeWidth={2} />
-            </button>
-
-            {/* Plus for service tabs */}
-            {(tab === "service" || tab === "oil" || tab === "tires") && (
-              <button
-                onClick={() =>
-                  openCreate(
-                    vehicles[0]?._id ?? "",
-                    tab === "oil" ? "oil" : tab === "tires" ? "tire" : "main"
-                  )
-                }
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-[#0B1A2A] transition-all active:scale-[0.95] shadow-[0_6px_18px_-6px_rgba(201,169,98,0.5)]"
-                style={{ background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)" }}
-                title="Új rekord"
-              >
-                <Plus className="w-[19px] h-[19px]" strokeWidth={2.5} />
+            {pendingLeaves > 0 && (
+              <button onClick={() => navigate("leaves")} className="relative w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                <Bell size={16} className="text-[#fbbf24]" />
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center" style={{ background: "#f59e0b", color: "#0B1A2A" }}>{pendingLeaves}</span>
               </button>
             )}
+            <button onClick={handleRefresh} className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "rgba(201,169,98,0.08)", border: "1px solid rgba(201,169,98,0.15)" }}>
+              <RefreshCw size={16} className={`text-[#C9A962]/70 ${refreshing ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+        </div>
 
+        {/* Search bar (contextual) */}
+        {["vehicles", "service", "oil", "tires", "leaves"].includes(activeSection) && (
+          <div className="px-4 pb-3 max-w-7xl mx-auto">
             <div className="relative">
-              <button
-                onClick={() => setShowMenu((v) => !v)}
-                className="w-10 h-10 rounded-xl border border-[#C9A962]/15 flex items-center justify-center transition-all active:scale-[0.95] overflow-hidden"
-                style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-              >
-                <div className="w-8 h-8 rounded-lg gold-gradient flex items-center justify-center">
-                  <span className="text-[12px] font-black text-[#0B1A2A]">
-                    {user?.name?.charAt(0)?.toUpperCase() || "C"}
-                  </span>
-                </div>
-              </button>
-
-              {showMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-                  <div className="absolute right-0 top-12 z-50 w-56 rounded-2xl card-glass shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden animate-slide-up">
-                    <div className="px-4 py-3.5 border-b border-[#C9A962]/10">
-                      <div className="text-[13px] font-bold text-[#F7F5F1] truncate">{user?.name || "Csoportvezető"}</div>
-                      <div className="text-[11px] text-[#F7F5F1]/50 font-medium truncate mt-0.5">{user?.email}</div>
-                    </div>
-                    <button
-                      onClick={handleLogout}
-                      className="w-full px-4 py-3.5 flex items-center gap-3 text-left hover:bg-[#C9A962]/5 transition-colors"
-                    >
-                      <LogOut className="w-[18px] h-[18px] text-[#f43f5e]" strokeWidth={2} />
-                      <span className="text-[13px] font-semibold text-[#f43f5e]">Kijelentkezés</span>
-                    </button>
-                  </div>
-                </>
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#C9A962]/40" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Keresés..."
+                className="w-full bg-transparent pl-9 pr-4 py-2 text-sm text-[#F7F5F1] placeholder-[#F7F5F1]/30 rounded-xl outline-none"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(201,169,98,0.12)" }}
+              />
+              {search && (
+                <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <X size={14} className="text-[#F7F5F1]/30" />
+                </button>
               )}
             </div>
           </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="w-full mx-auto px-4 pb-3">
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[17px] h-[17px] text-[#C9A962]/50" strokeWidth={2} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={
-                tab === "vehicles"
-                  ? "Keresés név, típus, rendszám..."
-                  : "Keresés rekord, típus, jármű, partner..."
-              }
-              className="w-full pl-10 pr-4 py-3.5 rounded-2xl text-[14px] text-[#F7F5F1] placeholder:text-[#F7F5F1]/35 font-medium border transition-all focus:outline-none focus:ring-2 focus:ring-[#C9A962]/25"
-              style={{
-                backgroundColor: "rgba(26,45,68,0.5)",
-                borderColor: search ? "rgba(201,169,98,0.4)" : "rgba(201,169,98,0.12)",
-              }}
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg flex items-center justify-center text-[#F7F5F1]/40 hover:text-[#F7F5F1]/80"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                  <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Tab Nav - horizontal scroll mobile */}
-        <div className="w-full mx-auto px-4 pb-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide -mx-1 px-1">
-            <TabButton active={tab === "vehicles"} onClick={() => setTab("vehicles")} icon={CarFront}>
-              Járművek
-            </TabButton>
-            <TabButton active={tab === "service"} onClick={() => setTab("service")} icon={Wrench}>
-              Szervíz
-            </TabButton>
-            <TabButton active={tab === "oil"} onClick={() => setTab("oil")} icon={Droplets}>
-              Olajcsere
-            </TabButton>
-            <TabButton active={tab === "tires"} onClick={() => setTab("tires")} icon={CircleDot}>
-              Gumicsere
-            </TabButton>
-          </div>
-        </div>
+        )}
       </header>
 
-      <main className="relative z-10 w-full mx-auto px-4 mt-5">
-        <div className="space-y-3 mb-4">
-          <DashboardHero
-            tab={tab}
-            user={user}
-            fleetPulse={fleetPulse}
-            servicePulse={servicePulse}
-            topPriorityVehicle={topPriorityVehicle}
-            onPrimaryAction={() => {
-              if (tab === "vehicles") {
-                if (topPriorityVehicle) {
-                  setExpandedVehicleId(topPriorityVehicle.vehicle._id);
-                  setSearch(topPriorityVehicle.vehicle.name);
-                } else {
-                  setTab("service");
-                }
-                return;
-              }
-              openCreate(
-                vehicles[0]?._id ?? "",
-                tab === "oil" ? "oil" : tab === "tires" ? "tire" : "main"
-              );
-            }}
-            onSecondaryAction={() => {
-              if (tab === "vehicles") {
-                setTab("service");
-                return;
-              }
-              setTab("vehicles");
-            }}
-          />
+      {/* ── Main Content ── */}
+      <main className="max-w-7xl mx-auto px-4 py-6 pb-16">
 
-          {tab === "vehicles" ? (
-            <InsightRail
-              items={[
-                {
-                  label: "Szabadon bevetheto",
-                  value: `${fleetPulse.availableNow} auto`,
-                  tone: "ok",
-                  icon: ShieldCheck,
-                },
-                {
-                  label: "Azonnali figyelem",
-                  value: fleetPulse.urgentCount ? `${fleetPulse.urgentCount} teendo` : "Nincs blokkolo",
-                  tone: fleetPulse.urgentCount ? "critical" : "ok",
-                  icon: AlertTriangle,
-                },
-                {
-                  label: "Hianyos naplo",
-                  value: fleetPulse.needsHistory ? `${fleetPulse.needsHistory} jarmu` : "Mindenhol van adat",
-                  tone: fleetPulse.needsHistory ? "info" : "ok",
-                  icon: FileText,
-                },
-              ]}
-            />
-          ) : (
-            <InsightRail
-              items={[
-                {
-                  label: "Lejart kovetes",
-                  value: servicePulse.overdue ? `${servicePulse.overdue} rekord` : "Nincs lejart",
-                  tone: servicePulse.overdue ? "critical" : "ok",
-                  icon: Clock,
-                },
-                {
-                  label: "14 napon belul",
-                  value: servicePulse.dueSoon ? `${servicePulse.dueSoon} esedekes` : "Nincs rovid hatarido",
-                  tone: servicePulse.dueSoon ? "warn" : "ok",
-                  icon: Sparkles,
-                },
-                {
-                  label: "30 nap aktivitasa",
-                  value: `${servicePulse.recent} rekord`,
-                  tone: "info",
-                  icon: Activity,
-                },
-              ]}
-            />
-          )}
-        </div>
-
-        {/* === VEHICLES TAB === */}
-        {tab === "vehicles" && (
-          <section className="space-y-4">
-            {/* Stats */}
-            <div className="grid grid-cols-2 gap-3">
-              <MiniStat title="Összes jármű" value={stats.total} icon={CarFront} tone="gold" />
-              <MiniStat title="Úton van" value={stats.onRoute} icon={Activity} tone="blue" />
-              <MiniStat title="Működik" value={stats.working} icon={ShieldCheck} tone="green" />
-              <MiniStat title="Hibás" value={stats.broken} icon={AlertTriangle} tone="red" />
-            </div>
-
-            {/* Filter chips */}
-            <div className="flex flex-col gap-3 p-2.5 rounded-2xl card-glass-light">
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide -mx-1 px-1">
-                <FilterTab active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
-                  Összes
-                </FilterTab>
-                <FilterTab active={statusFilter === "parked"} onClick={() => setStatusFilter("parked")} dot="#94a3b8">
-                  Szabad
-                </FilterTab>
-                <FilterTab active={statusFilter === "on_route"} onClick={() => setStatusFilter("on_route")} dot="#3b82f6">
-                  Úton
-                </FilterTab>
-                <div className="w-px h-5 bg-[#C9A962]/15 mx-1 shrink-0" />
-                <FilterTab active={conditionFilter === "all"} onClick={() => setConditionFilter("all")}>
-                  Minden állapot
-                </FilterTab>
-                <FilterTab active={conditionFilter === "working"} onClick={() => setConditionFilter("working")}>
-                  Működik
-                </FilterTab>
-                <FilterTab active={conditionFilter === "not_working"} onClick={() => setConditionFilter("not_working")}>
-                  Hibás
-                </FilterTab>
-              </div>
-              <div className="flex items-center justify-between px-1.5">
-                <div className="text-[10.5px] font-bold text-[#F7F5F1]/40 uppercase tracking-[0.2em]">
-                  <span className="text-[#C9A962] font-black">{filteredVehicles.length}</span> találat
+        {/* ════ OVERVIEW ════ */}
+        {activeSection === "overview" && (
+          <div className="animate-slide-up space-y-6">
+            {/* Greeting */}
+            <div className="rounded-2xl p-5" style={{ background: "linear-gradient(135deg, rgba(201,169,98,0.12) 0%, rgba(11,26,42,0.8) 100%)", border: "1px solid rgba(201,169,98,0.2)" }}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs text-[#C9A962]/60 tracking-widest uppercase mb-1">{new Date().toLocaleDateString("hu-HU", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+                  <h2 className="text-xl font-bold text-[#F7F5F1]">{getGreeting(displayName)}</h2>
+                  <p className="text-sm text-[#F7F5F1]/50 mt-1">{getMotivation()}</p>
+                </div>
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(201,169,98,0.15)" }}>
+                  <Coffee size={22} className="text-[#C9A962]" />
                 </div>
               </div>
             </div>
 
-            {/* Vehicle List (NO CARD GRID, elegant list mobile style) */}
-            {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-[110px] rounded-2xl card-glass animate-pulse" />
+            {/* Quick stats */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { label: "Összes jármű", value: stats.total, icon: Truck, color: "#C9A962", sub: `${stats.onRoute} úton` },
+                { label: "Működőképes", value: stats.working, icon: ShieldCheck, color: "#10b981", sub: `${stats.broken} meghibásodott` },
+                { label: "Szerviz figyelő", value: serviceStats.overdue, icon: AlertTriangle, color: serviceStats.overdue > 0 ? "#fb7185" : "#34d399", sub: `${serviceStats.dueSoon} hamarosan` },
+                { label: "Szabadság kérelem", value: pendingLeaves, icon: Calendar, color: pendingLeaves > 0 ? "#fbbf24" : "#34d399", sub: "Döntésre vár" },
+              ].map((s) => (
+                <div key={s.label} className="rounded-xl p-4 card-glass">
+                  <div className="flex items-center justify-between mb-3">
+                    <s.icon size={18} style={{ color: s.color }} />
+                    <span className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</span>
+                  </div>
+                  <p className="text-xs font-medium text-[#F7F5F1]/70">{s.label}</p>
+                  <p className="text-xs text-[#F7F5F1]/35 mt-0.5">{s.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Alerts preview */}
+            {alertItems.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-[#F7F5F1]/80">Figyelmeztetések</h3>
+                  <button onClick={() => navigate("alerts")} className="text-xs text-[#C9A962]/70 flex items-center gap-1">
+                    Összes <ChevronRight size={12} />
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {alertItems.slice(0, 3).map((a, i) => (
+                    <div key={i} className="rounded-xl p-3 flex items-start gap-3" style={{
+                      background: a.tone === "critical" ? "rgba(244,63,94,0.1)" : a.tone === "warn" ? "rgba(245,158,11,0.1)" : "rgba(59,130,246,0.1)",
+                      border: `1px solid ${a.tone === "critical" ? "rgba(244,63,94,0.2)" : a.tone === "warn" ? "rgba(245,158,11,0.2)" : "rgba(59,130,246,0.2)"}`,
+                    }}>
+                      <AlertTriangle size={15} style={{ color: a.tone === "critical" ? "#fb7185" : a.tone === "warn" ? "#fbbf24" : "#93c5fd", flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <p className="text-sm font-medium text-[#F7F5F1]">{a.label}</p>
+                        <p className="text-xs text-[#F7F5F1]/50 mt-0.5">{a.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quick actions */}
+            <div>
+              <h3 className="text-sm font-semibold text-[#F7F5F1]/80 mb-3">Gyors műveletek</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: "Járműpark", icon: Truck, section: "vehicles" as NavSection, color: "#C9A962" },
+                  { label: "Olajcsere", icon: Droplets, section: "oil" as NavSection, color: "#f59e0b" },
+                  { label: "Gumikezelés", icon: CircleDot, section: "tires" as NavSection, color: "#3b82f6" },
+                  { label: "Szabadságok", icon: Calendar, section: "leaves" as NavSection, color: pendingLeaves > 0 ? "#fbbf24" : "#8b5cf6" },
+                ].map((qa) => (
+                  <button
+                    key={qa.section}
+                    onClick={() => navigate(qa.section)}
+                    className="rounded-xl p-4 flex flex-col items-center gap-2 text-center card-glass transition-all duration-150 hover:scale-[1.02]"
+                  >
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${qa.color}18` }}>
+                      <qa.icon size={20} style={{ color: qa.color }} />
+                    </div>
+                    <span className="text-xs font-medium text-[#F7F5F1]/70">{qa.label}</span>
+                    {qa.section === "leaves" && pendingLeaves > 0 && (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(245,158,11,0.2)", color: "#fbbf24" }}>{pendingLeaves} db</span>
+                    )}
+                  </button>
                 ))}
               </div>
-            ) : filteredVehicles.length === 0 ? (
-              <div className="py-16 text-center card-glass rounded-3xl border-dashed">
-                <div className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center text-[#C9A962]/50 mb-5 border border-[#C9A962]/10" style={{ backgroundColor: "rgba(26,45,68,0.5)" }}>
-                  <Search className="w-6 h-6" strokeWidth={1.5} />
+            </div>
+
+            {/* Recent service */}
+            {records.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-[#F7F5F1]/80">Legutóbbi szervizek</h3>
+                  <button onClick={() => navigate("service")} className="text-xs text-[#C9A962]/70 flex items-center gap-1">Összes <ChevronRight size={12} /></button>
                 </div>
-                <h3 className="text-lg font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mb-2">
-                  Nincs találat
-                </h3>
-                <p className="text-[13px] font-medium text-[#F7F5F1]/50 px-8">
-                  Próbáld módosítani a szűrőket vagy a keresést.
-                </p>
+                <div className="space-y-2">
+                  {[...records].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).slice(0, 4).map((r, i) => {
+                    const Icon = SERVICE_TYPE_ICONS[r.type as ServiceRecordType] ?? FileText;
+                    const color = SERVICE_TYPE_COLORS[r.type as ServiceRecordType] ?? "#94a3b8";
+                    return (
+                      <div key={i} className="flex items-center gap-3 rounded-xl p-3 card-glass">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${color}18` }}>
+                          <Icon size={15} style={{ color }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-[#F7F5F1] truncate">{r.title}</p>
+                          <p className="text-xs text-[#F7F5F1]/40 truncate">{r.vehicleName ?? "—"} · {fmtDate(r.date)}</p>
+                        </div>
+                        {r.costHUF ? <p className="text-xs text-[#C9A962] flex-shrink-0">{hufFmt(r.costHUF)}</p> : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredVehicles.map((card, idx) => {
-                  const { vehicle, records: vehicleRecords, upcoming, lastRecord, priority } = card;
-                  const expanded = expandedVehicleId === vehicle._id;
+            )}
+          </div>
+        )}
+
+        {/* ════ VEHICLES ════ */}
+        {activeSection === "vehicles" && (
+          <div className="animate-slide-up space-y-4">
+            {/* Filter row */}
+            <div className="flex gap-2 flex-wrap">
+              {(["all", "working", "debrecen_only", "not_working"] as const).map((f) => (
+                <button key={f} onClick={() => setVehicleCondFilter(f)}
+                  className="text-xs px-3 py-1.5 rounded-full transition-all"
+                  style={{
+                    background: vehicleCondFilter === f ? "rgba(201,169,98,0.2)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${vehicleCondFilter === f ? "rgba(201,169,98,0.4)" : "rgba(255,255,255,0.08)"}`,
+                    color: vehicleCondFilter === f ? "#C9A962" : "rgba(247,245,241,0.5)",
+                  }}>
+                  {f === "all" ? "Mind" : CONDITION_META[f as VehicleCondition].label}
+                </button>
+              ))}
+            </div>
+
+            {/* Stats bar */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Összes", value: stats.total, color: "#C9A962" },
+                { label: "Úton", value: stats.onRoute, color: "#3b82f6" },
+                { label: "Hibás", value: stats.broken, color: stats.broken > 0 ? "#fb7185" : "#34d399" },
+              ].map((s) => (
+                <div key={s.label} className="rounded-xl p-3 card-glass text-center">
+                  <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
+                  <p className="text-xs text-[#F7F5F1]/40 mt-0.5">{s.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Vehicle list */}
+            <div className="space-y-3">
+              {filteredVehicleCards.length === 0 && (
+                <div className="text-center py-12 text-[#F7F5F1]/30">
+                  <Truck size={32} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Nem található jármű</p>
+                </div>
+              )}
+              {filteredVehicleCards.map(({ vehicle, records: vRecs, upcoming, lastRecord }) => {
+                const cond = CONDITION_META[vehicle.condition];
+                const expanded = expandedVehicleId === vehicle._id;
+                const ub = urgencyBadge(upcoming?.days ?? null);
+
+                return (
+                  <div key={vehicle._id} className="rounded-2xl overflow-hidden card-glass" style={{ border: vehicle.condition === "not_working" ? "1px solid rgba(244,63,94,0.3)" : undefined }}>
+                    {/* Card header */}
+                    <button className="w-full flex items-start gap-3 p-4 text-left" onClick={() => setExpandedVehicleId(expanded ? null : vehicle._id)}>
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: `${cond.textColor}15` }}>
+                        <CarFront size={20} style={{ color: cond.textColor }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-sm font-semibold text-[#F7F5F1]">{vehicle.name}</h3>
+                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: cond.bg, color: cond.textColor, border: `1px solid ${cond.border}` }}>{cond.label}</span>
+                          {vehicle.status === "on_route" && <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(59,130,246,0.15)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.25)" }}>Úton</span>}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          {vehicle.plates && <span className="text-xs text-[#F7F5F1]/40">{vehicle.plates}</span>}
+                          {vehicle.type && <span className="text-xs text-[#F7F5F1]/30">{vehicle.type}</span>}
+                          {ub && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ub.bg, color: ub.color }}>{ub.label}</span>}
+                        </div>
+                      </div>
+                      <ChevronDown size={16} className="text-[#F7F5F1]/30 flex-shrink-0 mt-1 transition-transform duration-200" style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
+                    </button>
+
+                    {/* Expanded content */}
+                    {expanded && (
+                      <div className="border-t px-4 pb-4 pt-3 space-y-3" style={{ borderColor: "rgba(201,169,98,0.1)" }}>
+                        {/* Actions row */}
+                        <div className="flex gap-2 flex-wrap">
+                          <button onClick={() => patchVehicle(vehicle._id, { status: vehicle.status === "on_route" ? "parked" : "on_route" })}
+                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+                            style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.2)" }}>
+                            <ArrowRight size={12} />
+                            {vehicle.status === "on_route" ? "Parkoltba" : "Útra küld"}
+                          </button>
+                          <button onClick={() => openCreate(vehicle._id, "oil")}
+                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+                            style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.2)" }}>
+                            <Droplets size={12} /> Olajcsere
+                          </button>
+                          <button onClick={() => openCreate(vehicle._id, "tire")}
+                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+                            style={{ background: "rgba(59,130,246,0.12)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.2)" }}>
+                            <CircleDot size={12} /> Gumicsere
+                          </button>
+                          <button onClick={() => openCreate(vehicle._id)}
+                            className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+                            style={{ background: "rgba(201,169,98,0.1)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.2)" }}>
+                            <Plus size={12} /> Szerviz rögzítés
+                          </button>
+                        </div>
+
+                        {/* Stats */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                            <p className="text-xs text-[#F7F5F1]/40">Szervizek</p>
+                            <p className="text-base font-bold text-[#C9A962] mt-0.5">{vRecs.length}</p>
+                          </div>
+                          <div className="rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                            <p className="text-xs text-[#F7F5F1]/40">Utolsó szerviz</p>
+                            <p className="text-xs font-medium text-[#F7F5F1]/70 mt-0.5">{lastRecord ? fmtDate(lastRecord.date) : "—"}</p>
+                          </div>
+                          <div className="rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                            <p className="text-xs text-[#F7F5F1]/40">Következő</p>
+                            <p className="text-xs font-medium mt-0.5" style={{ color: upcoming ? (upcoming.days < 0 ? "#fb7185" : upcoming.days <= 7 ? "#fbbf24" : "#34d399") : "#F7F5F1/70" }}>
+                              {upcoming ? fmtDate(upcoming.record.nextCheckDate) : "—"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Last 3 records */}
+                        {vRecs.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs text-[#F7F5F1]/40 uppercase tracking-wider">Előzmények</p>
+                            {[...vRecs].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).slice(0, 3).map((r, i) => {
+                              const Icon = SERVICE_TYPE_ICONS[r.type as ServiceRecordType] ?? FileText;
+                              const color = SERVICE_TYPE_COLORS[r.type as ServiceRecordType] ?? "#94a3b8";
+                              return (
+                                <div key={i} className="flex items-center gap-2 rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)" }}>
+                                  <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: `${color}18` }}>
+                                    <Icon size={12} style={{ color }} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-[#F7F5F1] truncate">{r.title}</p>
+                                    <p className="text-xs text-[#F7F5F1]/35">{fmtDate(r.date)} · {kmFmt(r.mileageKm)}</p>
+                                  </div>
+                                  {r.costHUF ? <span className="text-xs text-[#C9A962]">{hufFmt(r.costHUF)}</span> : null}
+                                  <div className="flex gap-1">
+                                    <button onClick={() => openEdit(r)} className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "rgba(201,169,98,0.1)" }}>
+                                      <Pencil size={10} className="text-[#C9A962]" />
+                                    </button>
+                                    <button onClick={() => setDeletingRecordId(String(r._id))} className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "rgba(244,63,94,0.1)" }}>
+                                      <Trash2 size={10} className="text-[#fb7185]" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {vehicle.note && (
+                          <div className="rounded-lg p-3 text-xs text-[#F7F5F1]/50" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                            📝 {vehicle.note}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ════ SERVICE / OIL / TIRES ════ */}
+        {(activeSection === "service" || activeSection === "oil" || activeSection === "tires") && (
+          <div className="animate-slide-up space-y-4">
+            {/* Header row: Tabs & Add button */}
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex gap-2">
+                {[
+                  { id: "service" as NavSection, label: "Összes szerviz", icon: Wrench },
+                  { id: "oil" as NavSection, label: "Olajcserék", icon: Droplets },
+                  { id: "tires" as NavSection, label: "Gumikezelés", icon: CircleDot },
+                ].map((t) => (
+                  <button key={t.id} onClick={() => navigate(t.id)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all"
+                    style={{
+                      background: activeSection === t.id ? "rgba(201,169,98,0.2)" : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${activeSection === t.id ? "rgba(201,169,98,0.35)" : "rgba(255,255,255,0.08)"}`,
+                      color: activeSection === t.id ? "#C9A962" : "rgba(247,245,241,0.5)",
+                    }}>
+                    <t.icon size={12} />
+                    <span className="hidden sm:inline">{t.label}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  setModalEditing(null);
+                  setModalVehicleId(null);
+                  setModalMode(activeSection === "oil" ? "oil" : activeSection === "tires" ? "tire" : "main");
+                  setModalOpen(true);
+                }}
+                className="flex items-center gap-2 text-sm px-4 py-2 rounded-xl font-medium transition-all hover:scale-105"
+                style={{ background: "rgba(201,169,98,0.15)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.25)" }}
+              >
+                <Plus size={16} /> Új rögzítése
+              </button>
+            </div>
+
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Összes rekord", value: activeSection === "oil" ? serviceStats.oilCount : activeSection === "tires" ? serviceStats.tireCount : serviceStats.total, color: "#C9A962" },
+                { label: "Lejárt", value: serviceStats.overdue, color: serviceStats.overdue > 0 ? "#fb7185" : "#34d399" },
+                { label: "14 napon belül", value: serviceStats.dueSoon, color: serviceStats.dueSoon > 0 ? "#fbbf24" : "#34d399" },
+                { label: "Összköltség", value: hufFmt(serviceStats.totalCost) ?? "0 Ft", color: "#C9A962" },
+              ].map((s, i) => (
+                <div key={i} className="rounded-xl p-3 card-glass">
+                  <p className="text-xs text-[#F7F5F1]/40 mb-1">{s.label}</p>
+                  <p className="text-lg font-bold" style={{ color: s.color }}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Records list */}
+            <div className="space-y-2">
+              {filteredServiceRecords.length === 0 && (
+                <div className="text-center py-12 text-[#F7F5F1]/30">
+                  <Wrench size={32} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Nincs rögzített szervizrekord</p>
+                </div>
+              )}
+              {filteredServiceRecords.map((r, i) => {
+                const Icon = SERVICE_TYPE_ICONS[r.type as ServiceRecordType] ?? FileText;
+                const color = SERVICE_TYPE_COLORS[r.type as ServiceRecordType] ?? "#94a3b8";
+                const days = daysUntil(r.nextCheckDate);
+                const ub = urgencyBadge(days);
+                return (
+                  <div key={i} className="rounded-2xl card-glass overflow-hidden" style={{ borderLeft: `3px solid ${color}` }}>
+                    <div className="p-4 flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${color}18` }}>
+                        <Icon size={17} style={{ color }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${color}18`, color }}>{getServiceTypeLabel(r.type as ServiceRecordType)}</span>
+                          {ub && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: ub.bg, color: ub.color }}>{ub.label}</span>}
+                        </div>
+                        <h4 className="text-sm font-medium text-[#F7F5F1]">{r.title}</h4>
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          {r.vehicleName && <span className="text-xs text-[#F7F5F1]/50">{r.vehicleName}</span>}
+                          <span className="text-xs text-[#F7F5F1]/35">{fmtDate(r.date)}</span>
+                          {r.mileageKm && <span className="text-xs text-[#F7F5F1]/35">{kmFmt(r.mileageKm)}</span>}
+                          {r.costHUF && <span className="text-xs text-[#C9A962]">{hufFmt(r.costHUF)}</span>}
+                          {r.servicePartner && <span className="text-xs text-[#F7F5F1]/35">📍 {r.servicePartner}</span>}
+                        </div>
+                        {r.nextCheckDate && (
+                          <p className="text-xs mt-1" style={{ color: ub?.color ?? "#F7F5F1/30" }}>
+                            Következő: {fmtDate(r.nextCheckDate)}
+                            {r.nextCheckMileageKm ? ` · ${kmFmt(r.nextCheckMileageKm)}` : ""}
+                          </p>
+                        )}
+                        {r.notes && <p className="text-xs text-[#F7F5F1]/40 mt-1 line-clamp-2">{r.notes}</p>}
+                      </div>
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        <button onClick={() => openEdit(r)} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(201,169,98,0.1)", border: "1px solid rgba(201,169,98,0.15)" }}>
+                          <Pencil size={12} className="text-[#C9A962]" />
+                        </button>
+                        <button onClick={() => setDeletingRecordId(String(r._id))} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(244,63,94,0.08)", border: "1px solid rgba(244,63,94,0.15)" }}>
+                          <Trash2 size={12} className="text-[#fb7185]" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ════ LEAVES ════ */}
+        {activeSection === "leaves" && (
+          <div className="animate-slide-up space-y-4">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Függőben", value: leaves.filter((l) => l.status === "pending").length, color: "#fbbf24", filter: "pending" as const },
+                { label: "Jóváhagyva", value: leaves.filter((l) => l.status === "approved").length, color: "#34d399", filter: "approved" as const },
+                { label: "Elutasítva", value: leaves.filter((l) => l.status === "rejected").length, color: "#fb7185", filter: "rejected" as const },
+              ].map((s) => (
+                <button key={s.filter} onClick={() => setLeaveFilter(leaveFilter === s.filter ? "all" : s.filter)}
+                  className="rounded-xl p-3 card-glass text-center transition-all"
+                  style={{ border: leaveFilter === s.filter ? `1px solid ${s.color}40` : undefined }}>
+                  <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
+                  <p className="text-xs text-[#F7F5F1]/40 mt-0.5">{s.label}</p>
+                </button>
+              ))}
+            </div>
+
+            {/* Filter tabs */}
+            <div className="flex gap-2 flex-wrap">
+              {(["all", "pending", "approved", "rejected"] as const).map((f) => (
+                <button key={f} onClick={() => setLeaveFilter(f)}
+                  className="text-xs px-3 py-1.5 rounded-full transition-all"
+                  style={{
+                    background: leaveFilter === f ? "rgba(201,169,98,0.18)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${leaveFilter === f ? "rgba(201,169,98,0.35)" : "rgba(255,255,255,0.08)"}`,
+                    color: leaveFilter === f ? "#C9A962" : "rgba(247,245,241,0.5)",
+                  }}>
+                  {f === "all" ? "Összes" : LEAVE_STATUS_META[f].label}
+                </button>
+              ))}
+            </div>
+
+            {/* Leave list */}
+            <div className="space-y-3">
+              {filteredLeaves.length === 0 && (
+                <div className="text-center py-12 text-[#F7F5F1]/30">
+                  <Calendar size={32} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">Nincs szabadságkérelem</p>
+                </div>
+              )}
+              {filteredLeaves.map((l) => {
+                const typeStyle = LEAVE_TYPE_COLORS[l.type];
+                const statusMeta = LEAVE_STATUS_META[l.status];
+                const StatusIcon = statusMeta.icon;
+                return (
+                  <div key={l._id} className="rounded-2xl card-glass overflow-hidden">
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-2">
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: typeStyle.bg, color: typeStyle.text, border: `1px solid ${typeStyle.border}` }}>
+                              {LEAVE_TYPE_LABELS[l.type]}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: statusMeta.bg, color: statusMeta.text, border: `1px solid ${statusMeta.border}` }}>
+                              <StatusIcon size={10} /> {statusMeta.label}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-semibold text-[#F7F5F1]">{l.driverName}</h4>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <span className="text-xs text-[#F7F5F1]/50">{fmtDate(l.startDate)} – {fmtDate(l.endDate)}</span>
+                            <span className="text-xs font-medium" style={{ color: "#C9A962" }}>{l.days} nap</span>
+                            {l.driverEmail && <span className="text-xs text-[#F7F5F1]/35">{l.driverEmail}</span>}
+                          </div>
+                          {l.reason && <p className="text-xs text-[#F7F5F1]/50 mt-1.5 italic">„{l.reason}"</p>}
+                          {l.reviewedBy && (
+                            <p className="text-xs text-[#F7F5F1]/30 mt-1">
+                              {statusMeta.label} · {l.reviewedBy} {l.reviewNote ? `· „${l.reviewNote}"` : ""}
+                            </p>
+                          )}
+                        </div>
+                        {l.status === "pending" && (
+                          <button
+                            onClick={() => { setReviewLeave(l); setReviewNote(""); }}
+                            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-all"
+                            style={{ background: "rgba(201,169,98,0.15)", color: "#C9A962", border: "1px solid rgba(201,169,98,0.25)" }}
+                          >
+                            Döntés
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ════ STATS ════ */}
+        {activeSection === "stats" && (
+          <div className="animate-slide-up space-y-5">
+            <h2 className="text-lg font-bold text-[#F7F5F1]">Statisztikák</h2>
+
+            {/* Fleet health */}
+            <div className="rounded-2xl p-5 card-glass">
+              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><Activity size={15} className="text-[#C9A962]" /> Flotta egészség</h3>
+              <div className="flex items-center gap-4">
+                <div className="relative w-20 h-20 flex-shrink-0">
+                  <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2.5" />
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="#10b981" strokeWidth="2.5"
+                      strokeDasharray={`${stats.total ? (stats.working / stats.total * 100) : 0} 100`} strokeLinecap="round" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-base font-bold text-[#10b981]">{stats.total ? Math.round(stats.working / stats.total * 100) : 0}%</span>
+                  </div>
+                </div>
+                <div className="space-y-2 flex-1">
+                  {[
+                    { label: "Működőképes", value: stats.working, total: stats.total, color: "#10b981" },
+                    { label: "Korlátozott", value: vehicles.filter(v => v.condition === "debrecen_only").length, total: stats.total, color: "#f59e0b" },
+                    { label: "Meghibásodott", value: stats.broken, total: stats.total, color: "#fb7185" },
+                  ].map((item) => (
+                    <div key={item.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-[#F7F5F1]/50">{item.label}</span>
+                        <span style={{ color: item.color }}>{item.value} / {item.total}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                        <div className="h-full rounded-full transition-all" style={{ width: `${item.total ? (item.value / item.total * 100) : 0}%`, background: item.color }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Service type breakdown */}
+            <div className="rounded-2xl p-5 card-glass">
+              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><BarChart3 size={15} className="text-[#C9A962]" /> Szerviz típusok</h3>
+              <div className="space-y-2">
+                {(["olajcsere", "gumicsere", "muszaki_vizsga", "szerviz_altalanos", "fekbetisztitas", "futomu_frissites", "tomegkozlekedesi_engedely", "egyeb"] as ServiceRecordType[]).map((type) => {
+                  const count = records.filter((r) => r.type === type).length;
+                  const pct = records.length ? Math.round(count / records.length * 100) : 0;
+                  const color = SERVICE_TYPE_COLORS[type];
+                  if (count === 0) return null;
                   return (
-                    <VehicleRow
-                      key={vehicle._id}
-                      index={idx}
-                      vehicle={vehicle}
-                      expanded={expanded}
-                      records={vehicleRecords}
-                      upcoming={upcoming}
-                      lastRecord={lastRecord}
-                      priority={priority}
-                      onToggle={() => setExpandedVehicleId(expanded ? null : vehicle._id)}
-                      onPatch={(patch: any) => patchVehicle(vehicle._id, patch)}
-                      onAddOil={() => openCreate(vehicle._id, "oil")}
-                      onAddTire={() => openCreate(vehicle._id, "tire")}
-                      onAddService={() => openCreate(vehicle._id, "main")}
-                      onEditRecord={openEdit}
-                      onDeleteRecord={(rid: any) => setDeletingRecordId(rid)}
-                    />
+                    <div key={type}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-[#F7F5F1]/60">{getServiceTypeLabel(type)}</span>
+                        <span style={{ color }}>{count} db ({pct}%)</span>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-            )}
-          </section>
-        )}
-
-        {/* === SERVICE / OIL / TIRES TABS === */}
-        {(tab === "service" || tab === "oil" || tab === "tires") && (
-          <section className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <MiniStat title="Összes rekord" value={serviceStats.totalRecords} icon={FileText} tone="gold" />
-              <MiniStat title="Hamarosan due" value={serviceStats.upcoming} icon={Clock} tone="blue" />
-              <MiniStat title="Olajcserék" value={serviceStats.oilCount} icon={Droplets} tone="green" />
-              <MiniStat title="Gumicserék" value={serviceStats.tireCount} icon={CircleDot} tone="red" />
             </div>
 
-            {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-[108px] rounded-2xl card-glass animate-pulse" />
-                ))}
+            {/* Cost summary */}
+            <div className="rounded-2xl p-5 card-glass">
+              <h3 className="text-sm font-semibold text-[#F7F5F1]/70 mb-4 flex items-center gap-2"><TrendingUp size={15} className="text-[#C9A962]" /> Szerviz költségek</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-xs text-[#F7F5F1]/40">Összes költség</p>
+                  <p className="text-lg font-bold text-[#C9A962] mt-1">{hufFmt(serviceStats.totalCost) ?? "0 Ft"}</p>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-xs text-[#F7F5F1]/40">Rekordok száma</p>
+                  <p className="text-lg font-bold text-[#C9A962] mt-1">{serviceStats.total}</p>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-xs text-[#F7F5F1]/40">Átlagos cost/rekord</p>
+                  <p className="text-base font-bold text-[#C9A962] mt-1">{serviceStats.total ? hufFmt(Math.round(serviceStats.totalCost / serviceStats.total)) ?? "—" : "—"}</p>
+                </div>
+                <div className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-xs text-[#F7F5F1]/40">Szabadságkérelmek</p>
+                  <p className="text-base font-bold text-[#fbbf24] mt-1">{leaves.length} db</p>
+                </div>
               </div>
-            ) : serviceFilteredRecords.length === 0 ? (
-              <EmptyStateService onAdd={() =>
-                openCreate(
-                  vehicles[0]?._id ?? "",
-                  tab === "oil" ? "oil" : tab === "tires" ? "tire" : "main"
-                )
-              }
-              tab={tab}
-              />
-            ) : (
-              <div className="space-y-3">
-                {serviceFilteredRecords.map((r, idx) => (
-                  <ServiceRow
-                    key={String(r._id)}
-                    index={idx}
-                    record={r}
-                    onEdit={() => openEdit(r)}
-                    onDelete={() => setDeletingRecordId(String(r._id))}
-                  />
-                ))}
+            </div>
+          </div>
+        )}
+
+        {/* ════ ALERTS ════ */}
+        {activeSection === "alerts" && (
+          <div className="animate-slide-up space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-[#F7F5F1]">Figyelmeztetések</h2>
+              <span className="text-sm text-[#F7F5F1]/40">{alertItems.length} tétel</span>
+            </div>
+
+            {alertItems.length === 0 && (
+              <div className="text-center py-16">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(16,185,129,0.1)" }}>
+                  <ShieldCheck size={28} className="text-[#10b981]" />
+                </div>
+                <h3 className="text-[#F7F5F1]/70 font-medium">Minden rendben!</h3>
+                <p className="text-sm text-[#F7F5F1]/35 mt-1">Nincs aktív figyelmeztetés</p>
               </div>
             )}
-          </section>
+
+            <div className="space-y-2">
+              {alertItems.map((a, i) => {
+                const toneColors = {
+                  critical: { bg: "rgba(244,63,94,0.12)", border: "rgba(244,63,94,0.25)", color: "#fb7185" },
+                  warn: { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.25)", color: "#fbbf24" },
+                  info: { bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.2)", color: "#93c5fd" },
+                }[a.tone];
+                return (
+                  <div key={i} className="rounded-2xl p-4 flex items-start gap-3" style={{ background: toneColors.bg, border: `1px solid ${toneColors.border}` }}>
+                    <AlertTriangle size={16} style={{ color: toneColors.color, flexShrink: 0, marginTop: 1 }} />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-[#F7F5F1]">{a.label}</p>
+                      <p className="text-xs mt-0.5" style={{ color: toneColors.color }}>{a.detail}</p>
+                    </div>
+                    {a.vehicleName && (
+                      <button onClick={() => { navigate("vehicles"); }} className="text-xs px-2 py-1 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#F7F5F1/50" }}>
+                        Jármű →
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
       </main>
 
-      {/* Toast */}
+      {/* ── Toast ── */}
       {toast && (
-        <div className="fixed top-[72px] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-sm animate-slide-up">
-          <div className={`px-4 py-3 rounded-2xl shadow-[0_16px_44px_rgba(0,0,0,0.5)] border flex items-center gap-2.5 ${
-            toast.ok
-              ? "bg-[rgba(16,185,129,0.15)] border-[rgba(16,185,129,0.3)]"
-              : "bg-[rgba(244,63,94,0.15)] border-[rgba(244,63,94,0.3)]"
-          }`}>
-            {toast.ok ? <Check className="w-[18px] h-[18px] text-[#10b981]" strokeWidth={2.5} /> : <AlertTriangle className="w-[18px] h-[18px] text-[#f43f5e]" strokeWidth={2.5} />}
-            <span className={`text-[13px] font-bold ${toast.ok ? "text-[#10b981]" : "text-[#f43f5e]"}`}>{toast.msg}</span>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-slide-up-bottom">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-medium shadow-xl" style={{
+            background: toast.ok ? "rgba(16,185,129,0.2)" : "rgba(244,63,94,0.2)",
+            border: `1px solid ${toast.ok ? "rgba(16,185,129,0.35)" : "rgba(244,63,94,0.35)"}`,
+            color: toast.ok ? "#34d399" : "#fb7185",
+            backdropFilter: "blur(16px)",
+          }}>
+            {toast.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+            {toast.msg}
           </div>
         </div>
       )}
 
-      {/* Record Delete Confirm */}
+      {/* ── Leave Review Modal ── */}
+      {reviewLeave && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-md rounded-2xl p-5 animate-slide-up-bottom" style={{ background: "#0d1f32", border: "1px solid rgba(201,169,98,0.2)" }}>
+            <h3 className="text-base font-bold text-[#F7F5F1] mb-1">Szabadságkérelem döntés</h3>
+            <p className="text-sm text-[#F7F5F1]/50 mb-4">{reviewLeave.driverName} · {LEAVE_TYPE_LABELS[reviewLeave.type]} · {reviewLeave.days} nap</p>
+            <div className="rounded-xl p-3 mb-4 text-sm" style={{ background: "rgba(255,255,255,0.04)" }}>
+              <p className="text-xs text-[#F7F5F1]/40 mb-0.5">Időszak</p>
+              <p className="text-[#F7F5F1]">{fmtDate(reviewLeave.startDate)} – {fmtDate(reviewLeave.endDate)}</p>
+              {reviewLeave.reason && <p className="text-xs text-[#F7F5F1]/50 mt-2 italic">„{reviewLeave.reason}"</p>}
+            </div>
+            <div className="mb-4">
+              <label className="text-xs text-[#F7F5F1]/50 mb-1.5 block">Megjegyzés (opcionális)</label>
+              <textarea
+                value={reviewNote}
+                onChange={(e) => setReviewNote(e.target.value)}
+                placeholder="Pl.: jóváhagyom, helyettesítésről gondoskodj..."
+                rows={2}
+                className="w-full rounded-xl px-3 py-2 text-sm outline-none resize-none"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,169,98,0.15)", color: "#F7F5F1" }}
+              />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setReviewLeave(null)} className="flex-1 py-2.5 rounded-xl text-sm" style={{ background: "rgba(255,255,255,0.04)", color: "#F7F5F1/50" }}>
+                Mégsem
+              </button>
+              <button
+                onClick={() => handleLeaveReview(reviewLeave._id, "rejected")}
+                disabled={reviewSubmitting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+                style={{ background: "rgba(244,63,94,0.15)", color: "#fb7185", border: "1px solid rgba(244,63,94,0.25)" }}
+              >
+                <XCircle size={14} /> Elutasít
+              </button>
+              <button
+                onClick={() => handleLeaveReview(reviewLeave._id, "approved")}
+                disabled={reviewSubmitting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+                style={{ background: "rgba(16,185,129,0.15)", color: "#34d399", border: "1px solid rgba(16,185,129,0.25)" }}
+              >
+                <CheckCircle2 size={14} /> Jóváhagy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirm ── */}
       {deletingRecordId && (
-        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in" onClick={() => setDeletingRecordId(null)}>
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-[4px]" />
-          <div
-            className="relative z-10 w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl border border-[#C9A962]/10 shadow-[0_26px_80px_rgba(0,0,0,0.6)] overflow-hidden animate-slide-up-bottom"
-            onClick={(e) => e.stopPropagation()}
-            style={{ backgroundColor: "#0F2338", paddingTop: "env(safe-area-inset-top)" }}
-          >
-            <div className="px-5 pt-5 pb-4 flex items-start justify-between">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[#f43f5e]">
-                  Törlés
-                </div>
-                <h3 className="text-[17px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mt-1">
-                  Biztosan törlöd ezt a rekordot?
-                </h3>
-                <p className="text-[12.5px] text-[#F7F5F1]/55 mt-1 font-medium">
-                  A művelet nem visszavonható.
-                </p>
-              </div>
-              <button
-                onClick={() => setDeletingRecordId(null)}
-                className="w-9 h-9 shrink-0 rounded-xl border border-[#C9A962]/10 flex items-center justify-center text-[#F7F5F1]/60 hover:text-[#F7F5F1] hover:bg-[#C9A962]/5 transition-all"
-                style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-              >
-                <X className="w-[17px] h-[17px]" strokeWidth={2.2} />
-              </button>
-            </div>
-            <div
-              className="px-5 pb-5 pt-2 border-t border-[#C9A962]/10 flex gap-3"
-              style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
-            >
-              <button
-                onClick={() => setDeletingRecordId(null)}
-                className="flex-1 px-4 py-3.5 rounded-2xl text-[12px] font-black uppercase tracking-[0.16em] border border-[#C9A962]/10 text-[#F7F5F1]/70 hover:text-[#F7F5F1] hover:bg-[#C9A962]/5 transition-all active:scale-[0.97]"
-                style={{ backgroundColor: "rgba(26,45,68,0.4)" }}
-              >
-                Mégse
-              </button>
-              <button
-                onClick={() => deleteRecord(deletingRecordId)}
-                className="flex-1 py-3.5 rounded-2xl text-[12px] font-black uppercase tracking-[0.18em] flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                style={{
-                  background: "linear-gradient(135deg, #f43f5e 0%, #be123c 100%)",
-                  color: "#ffffff",
-                  boxShadow: "0 10px 26px -8px rgba(244,63,94,0.55)",
-                }}
-              >
-                <Trash2 className="w-[16px] h-[16px]" strokeWidth={2.2} />
-                Törlés
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-sm rounded-2xl p-5 animate-slide-up" style={{ background: "#0d1f32", border: "1px solid rgba(244,63,94,0.2)" }}>
+            <h3 className="text-base font-bold text-[#F7F5F1] mb-2">Rekord törlése</h3>
+            <p className="text-sm text-[#F7F5F1]/50 mb-5">Ez a művelet nem visszavonható. Biztosan törlöd?</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeletingRecordId(null)} className="flex-1 py-2.5 rounded-xl text-sm" style={{ background: "rgba(255,255,255,0.04)" }}>Mégsem</button>
+              <button onClick={() => deleteRecord(deletingRecordId)} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: "rgba(244,63,94,0.15)", color: "#fb7185", border: "1px solid rgba(244,63,94,0.25)" }}>Törlés</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Service Modal */}
-      <ServiceRecordModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSave={saveRecord}
-        vehicles={vehicles}
-        preselectedVehicleId={modalVehicleId}
-        mode={modalMode}
-        editing={modalEditing}
-      />
-    </div>
-  );
-}
-
-/* =========== Subcomponents =========== */
-
-function TabButton({ active, onClick, icon: Icon, children }: any) {
-  return (
-    <button
-      onClick={onClick}
-      className={`relative px-3.5 py-2.5 rounded-xl text-[11.5px] font-black uppercase tracking-[0.14em] transition-all whitespace-nowrap shrink-0 flex items-center gap-2 ${
-        active
-          ? "shadow-[0_6px_18px_-6px_rgba(201,169,98,0.4)]"
-          : "bg-transparent text-[#F7F5F1]/55 hover:bg-[#C9A962]/5 hover:text-[#F7F5F1]/90"
-      }`}
-      style={
-        active
-          ? {
-              background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)",
-              color: "#0B1A2A",
-            }
-          : {}
-      }
-    >
-      <Icon className="w-[15px] h-[15px]" strokeWidth={2.2} />
-      {children}
-    </button>
-  );
-}
-
-function MiniStat({ title, value, icon: Icon, tone }: any) {
-  const palettes = {
-    gold: {
-      valueColor: "#F7F5F1",
-      iconBg: "rgba(201,169,98,0.15)",
-      iconBorder: "rgba(201,169,98,0.25)",
-      iconColor: "#C9A962",
-      accent: "#C9A962",
-    },
-    blue: {
-      valueColor: "#93c5fd",
-      iconBg: "rgba(59,130,246,0.15)",
-      iconBorder: "rgba(59,130,246,0.25)",
-      iconColor: "#60a5fa",
-      accent: "#60a5fa",
-    },
-    green: {
-      valueColor: "#34d399",
-      iconBg: "rgba(16,185,129,0.15)",
-      iconBorder: "rgba(16,185,129,0.25)",
-      iconColor: "#10b981",
-      accent: "#10b981",
-    },
-    red: {
-      valueColor: "#fb7185",
-      iconBg: "rgba(244,63,94,0.15)",
-      iconBorder: "rgba(244,63,94,0.25)",
-      iconColor: "#f43f5e",
-      accent: "#f43f5e",
-    },
-  };
-  const t = (palettes as any)[tone] ?? palettes.gold;
-  return (
-    <div
-      className="p-3.5 rounded-2xl flex items-center gap-3 transition-all active:scale-[0.99]"
-      style={{
-        backgroundColor: "rgba(26,45,68,0.5)",
-        border: `1px solid ${t.iconBorder}`,
-        boxShadow: "0 8px 24px -16px rgba(0,0,0,0.45)",
-      }}
-    >
-      <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border"
-        style={{ backgroundColor: t.iconBg, borderColor: t.iconBorder, color: t.iconColor }}
-      >
-        <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: `${t.accent}99` }}>
-          {title}
-        </div>
-        <div className="text-[22px] font-black leading-none mt-1 tracking-tight" style={{ color: t.valueColor }}>
-          {value}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FilterTab({ active, onClick, children, dot }: any) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3.5 py-2 rounded-xl text-[11.5px] font-bold uppercase tracking-[0.12em] transition-all flex items-center gap-2 whitespace-nowrap shrink-0 ${
-        active
-          ? "text-[#0B1A2A] shadow-[0_4px_16px_rgba(201,169,98,0.3)]"
-          : "bg-transparent text-[#F7F5F1]/55 hover:bg-[#C9A962]/5 hover:text-[#F7F5F1]/85"
-      }`}
-      style={active ? { background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)" } : {}}
-    >
-      {dot && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dot }} />}
-      {children}
-    </button>
-  );
-}
-
-function DashboardHero({
-  tab,
-  user,
-  fleetPulse,
-  servicePulse,
-  topPriorityVehicle,
-  onPrimaryAction,
-  onSecondaryAction,
-}: any) {
-  const firstName = user?.name?.split(" ")?.[0] || "Csoportvezető";
-  const isVehicleTab = tab === "vehicles";
-  const heading = isVehicleTab ? `${getGreeting()}, ${firstName}` : "Szerviz kozpont";
-  const subline = isVehicleTab
-    ? topPriorityVehicle
-      ? `${topPriorityVehicle.vehicle.name} most a legfontosabb fokusz. ${topPriorityVehicle.priority.detail}`
-      : "A flottat itt latod a legfontosabb prioritasokkal es gyors muveletekkel."
-    : servicePulse.nextAlert
-    ? `${servicePulse.nextAlert.record.vehicleName || "Egy jarmu"} kovetkezo ellenorzese all a legkozelebb.`
-    : "Itt latod a hataridos rekordokat, koltsegeket es a gyors rogzitest.";
-
-  return (
-    <section className="relative overflow-hidden rounded-[28px] border border-[#C9A962]/14 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.75)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(201,169,98,0.18),transparent_32%),linear-gradient(160deg,rgba(15,35,56,0.98),rgba(11,26,42,0.96))]" />
-      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.02)_18%,transparent_36%)]" />
-      <div className="relative px-4 py-4.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-[#C9A962]/15 bg-[#C9A962]/[0.06] text-[#C9A962] text-[10px] font-black uppercase tracking-[0.18em]">
-              <Sparkles className="w-3.5 h-3.5" strokeWidth={2.4} />
-              {isVehicleTab ? "Flotta fokusz" : "Szerviz fokusz"}
-            </div>
-            <h2 className="mt-3 text-[22px] leading-[1.05] font-[family-name:var(--font-serif)] font-bold tracking-tight text-[#F7F5F1]">
-              {heading}
-            </h2>
-            <p className="mt-2 text-[12.5px] leading-relaxed font-medium text-[#F7F5F1]/62 max-w-[28rem]">
-              {subline}
-            </p>
-          </div>
-
-          <div className="w-14 h-14 shrink-0 rounded-[22px] flex items-center justify-center border border-[#C9A962]/18 bg-[#C9A962]/10 shadow-[0_12px_34px_-14px_rgba(201,169,98,0.5)]">
-            {isVehicleTab ? (
-              <CarFront className="w-7 h-7 text-[#C9A962]" strokeWidth={2.2} />
-            ) : (
-              <Wrench className="w-7 h-7 text-[#C9A962]" strokeWidth={2.2} />
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-2.5">
-          <HeroMetric
-            label={isVehicleTab ? "Flotta allapot" : "Lejart kontroll"}
-            value={isVehicleTab ? `${fleetPulse.healthScore}%` : String(servicePulse.overdue)}
-            tone={isVehicleTab ? "ok" : servicePulse.overdue ? "critical" : "ok"}
-            icon={isVehicleTab ? ShieldCheck : Clock}
-          />
-          <HeroMetric
-            label={isVehicleTab ? "Kihasznaltsag" : "14 napon belul"}
-            value={isVehicleTab ? `${fleetPulse.utilization}%` : String(servicePulse.dueSoon)}
-            tone={isVehicleTab ? "info" : servicePulse.dueSoon ? "warn" : "ok"}
-            icon={Activity}
-          />
-          <HeroMetric
-            label={isVehicleTab ? "Nyitott fokusz" : "Koltes"}
-            value={isVehicleTab ? String(fleetPulse.urgentCount) : huf(servicePulse.totalCost) || "0 Ft"}
-            tone={isVehicleTab ? (fleetPulse.urgentCount ? "critical" : "ok") : "info"}
-            icon={isVehicleTab ? AlertTriangle : FileText}
-          />
-        </div>
-
-        <div className="mt-4 flex items-center gap-2.5">
-          <button
-            onClick={onPrimaryAction}
-            className="flex-1 h-12 rounded-2xl px-4 text-[11px] font-black uppercase tracking-[0.18em] flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-            style={{
-              background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)",
-              color: "#0B1A2A",
-              boxShadow: "0 12px 32px -14px rgba(201,169,98,0.6)",
-            }}
-          >
-            {isVehicleTab ? "Fokusz jarmu" : "Uj rekord"}
-            <ArrowRight className="w-4 h-4" strokeWidth={2.6} />
-          </button>
-          <button
-            onClick={onSecondaryAction}
-            className="h-12 px-4 rounded-2xl border border-[#C9A962]/12 bg-[#13273c]/70 text-[#F7F5F1]/76 text-[11px] font-black uppercase tracking-[0.16em] transition-all active:scale-[0.98]"
-          >
-            {isVehicleTab ? "Naplo" : "Jarmuvek"}
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function HeroMetric({ label, value, tone, icon: Icon }: any) {
-  const style = getToneStyles(tone);
-  return (
-    <div className="rounded-2xl border p-3" style={{ backgroundColor: "rgba(12,26,42,0.5)", borderColor: style.border }}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[9px] font-black uppercase tracking-[0.18em]" style={{ color: `${style.color}CC` }}>
-          {label}
-        </div>
-        <div className="w-7 h-7 rounded-xl flex items-center justify-center border" style={{ backgroundColor: style.bg, borderColor: style.border, color: style.color }}>
-          <Icon className="w-3.5 h-3.5" strokeWidth={2.3} />
-        </div>
-      </div>
-      <div className="mt-2 text-[18px] font-black leading-none tracking-tight text-[#F7F5F1] truncate">{value}</div>
-    </div>
-  );
-}
-
-function InsightRail({ items }: any) {
-  return (
-    <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1">
-      {items.map((item: any) => {
-        const style = getToneStyles(item.tone);
-        const Icon = item.icon;
-        return (
-          <div
-            key={item.label}
-            className="min-w-[180px] flex-1 rounded-2xl border px-3 py-3 flex items-center gap-3"
-            style={{ backgroundColor: "rgba(19,39,60,0.56)", borderColor: style.border }}
-          >
-            <div className="w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0" style={{ backgroundColor: style.bg, borderColor: style.border, color: style.color }}>
-              <Icon className="w-[17px] h-[17px]" strokeWidth={2.1} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-[0.16em]" style={{ color: `${style.color}D9` }}>
-                {item.label}
-              </div>
-              <div className="mt-1 text-[12.5px] font-bold text-[#F7F5F1] truncate">{item.value}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* === VEHICLE LIST ITEM - mobile optimized elegant LIST, NOT CARDS === */
-function VehicleRow({
-  vehicle,
-  expanded,
-  records,
-  upcoming,
-  lastRecord,
-  priority,
-  index,
-  onToggle,
-  onPatch,
-  onAddOil,
-  onAddTire,
-  onAddService,
-  onEditRecord,
-  onDeleteRecord,
-}: any) {
-  const v = vehicle as Vehicle;
-  const isParked = v.status === "parked";
-  const cond = CONDITION_META[v.condition];
-  const CondIcon = cond.icon;
-  const st = statusMeta[v.status];
-  const focus = priority ?? getVehiclePriority(v, upcoming?.days, records.length);
-  const focusStyle = getToneStyles(focus.tone);
-  const upcomingDays = upcoming?.days;
-  const upcomingBadge = upcoming?.record;
-  const nextCheckTone =
-    upcomingDays == null
-      ? null
-      : upcomingDays <= 7
-      ? "critical"
-      : upcomingDays <= 30
-      ? "warn"
-      : "ok";
-
-  return (
-    <div
-      className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 animate-slide-up card-glass active:scale-[0.995]"
-      style={{
-        animationDelay: `${Math.min(index * 45, 280)}ms`,
-      }}
-    >
-      {/* Left side accent bar */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-[3px] z-10"
-        style={{
-          background: expanded
-            ? "linear-gradient(180deg, #C9A962, #d4bb7a)"
-            : v.condition === "working"
-            ? "linear-gradient(180deg, #10b981 0%, #059669 100%)"
-            : v.condition === "debrecen_only"
-            ? "linear-gradient(180deg, #f59e0b 0%, #d97706 100%)"
-            : "linear-gradient(180deg, #f43f5e 0%, #be123c 100%)",
-          borderRadius: "2px 0 0 2px",
-        }}
-      />
-
-      {/* Row - NOT a button to avoid nested <button> hydration error with ActionPatchButton */}
-      {/* EXPLICIT pr-5 (20px) jobb padding + pl-[1.15rem] to avoid any overflow of right actions */}
-      <div className="flex items-stretch w-full pl-[1.15rem] pr-5 py-3.5 gap-3">
-        {/* Clickable left + center area - toggles expand */}
-        <div
-          onClick={onToggle}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
-          className="flex-1 min-w-0 flex items-center gap-3 cursor-pointer outline-none"
-        >
-          {/* Icon */}
-          <div
-            className="relative w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border"
-            style={{
-              backgroundColor: "rgba(201,169,98,0.1)",
-              borderColor: "rgba(201,169,98,0.2)",
-            }}
-          >
-            <CarFront className="w-[20px] h-[20px] text-[#C9A962]" strokeWidth={2} />
-            <span
-              className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0F2338]"
-              style={{ backgroundColor: st.dot }}
-              title={st.label}
-            />
-          </div>
-
-          {/* Main content */}
-          <div className="min-w-0 flex-1 flex flex-col justify-center overflow-hidden">
-            <div className="flex items-center gap-1.5">
-              <span
-                className="text-[8.5px] font-black uppercase tracking-[0.16em] shrink-0"
-                style={{ color: st.textColor }}
-              >
-                {st.label}
-              </span>
-              {focus.score >= 48 && (
-                <span
-                  className="px-1.5 py-0.5 rounded-md text-[8.5px] font-black uppercase tracking-[0.08em] shrink-0 border"
-                  style={{ backgroundColor: focusStyle.bg, borderColor: focusStyle.border, color: focusStyle.color }}
-                >
-                  {focus.label}
-                </span>
-              )}
-              {upcomingBadge && nextCheckTone && (
-                <span
-                  className="px-1.5 py-0.5 rounded-md text-[8.5px] font-black uppercase tracking-[0.08em] shrink-0"
-                  style={
-                    nextCheckTone === "critical"
-                      ? { backgroundColor: "rgba(244,63,94,0.18)", color: "#fb7185" }
-                      : nextCheckTone === "warn"
-                      ? { backgroundColor: "rgba(245,158,11,0.18)", color: "#fbbf24" }
-                      : { backgroundColor: "rgba(16,185,129,0.16)", color: "#34d399" }
-                  }
-                >
-                  {upcomingDays! < 0 ? `Lejárt ${-upcomingDays!} napja` : `${upcomingDays!} nap múlva`}
-                </span>
-              )}
-            </div>
-
-            <h2 className="mt-0.5 text-[15px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] truncate leading-tight tracking-tight">
-              {v.name}
-            </h2>
-
-            <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
-              <span className="inline-flex items-center gap-0.5 text-[10.5px] font-bold tracking-wide text-[#C9A962]/90">
-                <Hash className="w-[10px] h-[10px]" strokeWidth={2.5} />
-                {v.plates || "—"}
-              </span>
-              <span className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold text-[#F7F5F1]/50 uppercase tracking-wide">
-                <Users className="w-[10px] h-[10px]" strokeWidth={2.2} />
-                {v.seats ? `${v.seats} fő` : "—"}
-              </span>
-              {v.color && (
-                <span className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold text-[#F7F5F1]/50 uppercase tracking-wide">
-                  <Palette className="w-[10px] h-[10px]" strokeWidth={2.2} />
-                  {v.color}
-                </span>
-              )}
-            </div>
-
-            {lastRecord && (
-              <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[#F7F5F1]/45 font-medium truncate">
-                <Clock className="w-[10px] h-[10px] shrink-0" strokeWidth={2} />
-                <span className="truncate">
-                  Utolsó: <span className="font-semibold text-[#F7F5F1]/65 truncate">{formatDate(lastRecord.date)}</span>
-                  {" "}· {getServiceTypeLabel(lastRecord.type)}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right actions: CTA + expand - SHRINK-0 so buttons never get cut off, keep width stable */}
-        <div className="flex items-center gap-1.5 shrink-0 pl-1">
-          <ActionPatchButton parked={isParked} onClick={() => { onPatch({ status: isParked ? "on_route" : "parked" }); }} />
-          <button
-            onClick={onToggle}
-            aria-label={expanded ? "Összecsukás" : "Kibontás"}
-            className="w-9 h-9 rounded-xl border border-[#C9A962]/10 flex items-center justify-center text-[#C9A962]/80 hover:bg-[#C9A962]/5 transition-all active:scale-[0.95] shrink-0"
-            style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-          >
-            <ChevronDown className={`w-[17px] h-[17px] transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2.4} />
-          </button>
-        </div>
-      </div>
-
-      {/* Expanded section - service sublist */}
-      {expanded && (
-        <div className="px-4 pb-4 border-t border-[#C9A962]/10 pt-4 space-y-3" style={{ paddingLeft: "1.15rem", paddingRight: "1rem" }}>
-          {/* Quick actions */}
-          <div className="grid grid-cols-3 gap-2">
-            <QuickAction onClick={onAddOil} icon={Droplets} tone="blue">
-              Olajcsere
-            </QuickAction>
-            <QuickAction onClick={onAddTire} icon={CircleDot} tone="amber">
-              Gumicsere
-            </QuickAction>
-            <QuickAction onClick={onAddService} icon={Wrench} tone="gold">
-              Szerviz
-            </QuickAction>
-          </div>
-
-          {/* Info badges row */}
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div
-              className="p-3 rounded-2xl border flex items-center gap-2.5"
-              style={{ backgroundColor: "rgba(26,45,68,0.4)", borderColor: cond.borderColor }}
-            >
-              <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border"
-                style={{ backgroundColor: cond.backgroundColor, borderColor: cond.borderColor, color: cond.textColor }}
-              >
-                <CondIcon className="w-[16px] h-[16px]" strokeWidth={2.2} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#F7F5F1]/45">
-                  Állapot
-                </div>
-                <div className="text-[12.5px] font-black truncate" style={{ color: cond.textColor }}>
-                  {cond.label}
-                </div>
-              </div>
-            </div>
-            <div
-              className="p-3 rounded-2xl border flex items-center gap-2.5"
-              style={{ backgroundColor: "rgba(26,45,68,0.4)", borderColor: "rgba(201,169,98,0.12)" }}
-            >
-              <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border"
-                style={{ backgroundColor: "rgba(201,169,98,0.1)", borderColor: "rgba(201,169,98,0.2)", color: "#C9A962" }}
-              >
-                <FileText className="w-[16px] h-[16px]" strokeWidth={2} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#F7F5F1]/45">
-                  Rekordok
-                </div>
-                <div className="text-[12.5px] font-black truncate text-[#C9A962]">
-                  {records.length} db
-                </div>
-              </div>
-            </div>
-            <div
-              className="p-3 rounded-2xl border flex items-center gap-2.5"
-              style={{ backgroundColor: "rgba(26,45,68,0.4)", borderColor: focusStyle.border }}
-            >
-              <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border"
-                style={{ backgroundColor: focusStyle.bg, borderColor: focusStyle.border, color: focusStyle.color }}
-              >
-                <Sparkles className="w-[16px] h-[16px]" strokeWidth={2.2} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#F7F5F1]/45">
-                  Prioritas
-                </div>
-                <div className="text-[12.5px] font-black truncate" style={{ color: focusStyle.color }}>
-                  {focus.label}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Note */}
-          {v.note && (
-            <div className="p-3 rounded-2xl border flex items-start gap-2.5" style={{ backgroundColor: "rgba(245,158,11,0.08)", borderColor: "rgba(245,158,11,0.22)" }}>
-              <AlertTriangle className="w-[15px] h-[15px] text-[#f59e0b] shrink-0 mt-0.5" strokeWidth={2.1} />
-              <div className="text-[11.5px] font-semibold text-[#fbbf24] leading-relaxed">{v.note}</div>
-            </div>
-          )}
-
-          {/* Records per vehicle */}
-          {records.length === 0 ? (
-            <div className="p-4 rounded-2xl border border-dashed border-[#C9A962]/15 flex flex-col items-center text-center" style={{ backgroundColor: "rgba(26,45,68,0.35)" }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2 border border-[#C9A962]/10" style={{ backgroundColor: "rgba(201,169,98,0.08)", color: "#C9A962" }}>
-                <Wrench className="w-[18px] h-[18px]" strokeWidth={1.7} />
-              </div>
-              <div className="text-[12.5px] font-bold text-[#F7F5F1]/80">Még nincs szerviz rekord</div>
-              <div className="text-[11px] text-[#F7F5F1]/50 mt-0.5 font-medium">
-                Használd a gombokat fent rögzítéshez
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <div className="text-[10.5px] font-black uppercase tracking-[0.2em] text-[#F7F5F1]/40">
-                  Szerviz előzmények
-                </div>
-              </div>
-              {records.slice(0, 8).map((r: ServiceRecord) => (
-                <InlineRecord
-                  key={String(r._id)}
-                  record={r}
-                  onEdit={() => onEditRecord(r)}
-                  onDelete={() => onDeleteRecord(String(r._id))}
-                />
-              ))}
-              {records.length > 8 && (
-                <div className="text-center pt-1">
-                  <span className="text-[10.5px] font-bold uppercase tracking-[0.18em] text-[#F7F5F1]/40">
-                    {records.length - 8} további rekord · lásd a Szervíz fül alatt
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+      {/* ── Service Record Modal ── */}
+      {modalOpen && (
+        <ServiceRecordModal
+          open={modalOpen}
+          vehicles={vehicles.map((v) => ({ _id: v._id, name: v.name, plates: v.plates }))}
+          preselectedVehicleId={modalVehicleId ?? undefined}
+          mode={modalMode}
+          editing={modalEditing as any}
+          onClose={() => setModalOpen(false)}
+          onSave={saveRecord}
+        />
       )}
-    </div>
-  );
-}
-
-function ActionPatchButton({ parked, onClick }: { parked: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-[0.12em] transition-all active:scale-[0.97] whitespace-nowrap shrink-0"
-      style={
-        parked
-          ? {
-              background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)",
-              color: "#0B1A2A",
-              boxShadow: "0 6px 16px -8px rgba(201,169,98,0.65)",
-            }
-          : {
-              backgroundColor: "rgba(37,65,97,0.55)",
-              border: "1px solid rgba(59,130,246,0.32)",
-              color: "#93c5fd",
-            }
-      }
-    >
-      {parked ? (
-        <span className="flex items-center gap-1">
-          Úton <ArrowRight className="w-[11px] h-[11px]" strokeWidth={3} />
-        </span>
-      ) : (
-        <span className="flex items-center gap-1">
-          Park <Check className="w-[11px] h-[11px]" strokeWidth={3} />
-        </span>
-      )}
-    </button>
-  );
-}
-
-function QuickAction({ icon: Icon, onClick, children, tone }: any) {
-  const tones: Record<string, any> = {
-    blue: { bg: "rgba(59,130,246,0.12)", border: "rgba(59,130,246,0.22)", color: "#60a5fa" },
-    amber: { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.22)", color: "#fbbf24" },
-    gold: { bg: "rgba(201,169,98,0.12)", border: "rgba(201,169,98,0.22)", color: "#C9A962" },
-  };
-  const t = tones[tone] ?? tones.gold;
-  return (
-    <button
-      onClick={onClick}
-      className="px-2 py-2.5 rounded-2xl border text-[10.5px] font-black uppercase tracking-[0.14em] flex flex-col items-center gap-1.5 transition-all active:scale-[0.97]"
-      style={{ backgroundColor: t.bg, borderColor: t.border, color: t.color }}
-    >
-      <div className="w-9 h-9 rounded-xl flex items-center justify-center border" style={{ borderColor: t.border, backgroundColor: "rgba(11,26,42,0.25)" }}>
-        <Icon className="w-[17px] h-[17px]" strokeWidth={2.1} />
-      </div>
-      {children}
-    </button>
-  );
-}
-
-function InlineRecord({ record, onEdit, onDelete }: any) {
-  const r = record as ServiceRecord;
-  const TIcon = typeIconMap[r.type] ?? FileText;
-  const days = r.nextCheckDate ? daysUntil(r.nextCheckDate) : null;
-  const tone =
-    days == null
-      ? null
-      : days <= 7
-      ? "critical"
-      : days <= 30
-      ? "warn"
-      : "ok";
-
-  return (
-    <div
-      className="p-3 rounded-2xl border flex items-center gap-3 transition-all active:scale-[0.99]"
-      style={{ backgroundColor: "rgba(15,35,56,0.55)", borderColor: "rgba(201,169,98,0.1)" }}
-    >
-      <div className="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center border" style={{ backgroundColor: "rgba(201,169,98,0.1)", borderColor: "rgba(201,169,98,0.2)", color: "#C9A962" }}>
-        <TIcon className="w-[17px] h-[17px]" strokeWidth={2} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-[#C9A962]">
-            {getServiceTypeLabel(r.type)}
-          </span>
-          {tone && (
-            <span
-              className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-[0.1em]"
-              style={
-                tone === "critical"
-                  ? { backgroundColor: "rgba(244,63,94,0.18)", color: "#fb7185" }
-                  : tone === "warn"
-                  ? { backgroundColor: "rgba(245,158,11,0.18)", color: "#fbbf24" }
-                  : { backgroundColor: "rgba(16,185,129,0.16)", color: "#34d399" }
-              }
-            >
-              {days! < 0 ? `le ${-days!} nap` : `k${days!} nap`}
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 text-[12.5px] font-bold text-[#F7F5F1] truncate leading-tight">
-          {r.title}
-        </div>
-        <div className="mt-1 flex items-center gap-2 flex-wrap text-[10.5px] text-[#F7F5F1]/55 font-semibold">
-          <span className="inline-flex items-center gap-1">
-            <Calendar className="w-[11px] h-[11px]" strokeWidth={2.3} />
-            {formatDate(r.date)}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Gauge className="w-[11px] h-[11px]" strokeWidth={2.3} />
-            {kmNumber(r.mileageKm)}
-          </span>
-          {r.costHUF != null && <span>{huf(r.costHUF)}</span>}
-        </div>
-      </div>
-      <div className="flex flex-col items-stretch gap-1 shrink-0">
-        <button
-          onClick={onEdit}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#C9A962]/85 hover:text-[#C9A962] hover:bg-[#C9A962]/10 border border-[#C9A962]/10 transition-all active:scale-[0.95]"
-          style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-        >
-          <Pencil className="w-[13px] h-[13px]" strokeWidth={2.2} />
-        </button>
-        <button
-          onClick={onDelete}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#fb7185]/90 hover:text-[#f43f5e] hover:bg-[rgba(244,63,94,0.1)] border border-[rgba(244,63,94,0.18)] transition-all active:scale-[0.95]"
-          style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-        >
-          <Trash2 className="w-[13px] h-[13px]" strokeWidth={2.2} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ServiceRow({ record, index, onEdit, onDelete }: any) {
-  const r = record as ServiceRecord;
-  const TIcon = typeIconMap[r.type] ?? FileText;
-  const days = r.nextCheckDate ? daysUntil(r.nextCheckDate) : null;
-  const tone =
-    days == null
-      ? null
-      : days <= 7
-      ? "critical"
-      : days <= 30
-      ? "warn"
-      : "ok";
-
-  return (
-    <div
-      className="relative overflow-hidden rounded-2xl transition-all duration-300 animate-slide-up card-glass active:scale-[0.995]"
-      style={{ animationDelay: `${Math.min(index * 45, 280)}ms` }}
-    >
-      <div
-        className="absolute left-0 top-0 bottom-0 w-[3px]"
-        style={{
-          background:
-            r.type === "olajcsere"
-              ? "linear-gradient(180deg, #3b82f6, #1d4ed8)"
-              : r.type === "gumicsere"
-              ? "linear-gradient(180deg, #f59e0b, #d97706)"
-              : r.type === "muszaki_vizsga"
-              ? "linear-gradient(180deg, #10b981, #059669)"
-              : "linear-gradient(180deg, #C9A962, #b8973f)",
-          borderRadius: "2px 0 0 2px",
-        }}
-      />
-
-      <div className="px-4 py-3.5 flex items-start gap-3.5" style={{ paddingLeft: "1.15rem" }}>
-        <div
-          className="relative w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center border"
-          style={{
-            backgroundColor:
-              r.type === "olajcsere"
-                ? "rgba(59,130,246,0.12)"
-                : r.type === "gumicsere"
-                ? "rgba(245,158,11,0.12)"
-                : r.type === "muszaki_vizsga"
-                ? "rgba(16,185,129,0.12)"
-                : "rgba(201,169,98,0.1)",
-            borderColor:
-              r.type === "olajcsere"
-                ? "rgba(59,130,246,0.25)"
-                : r.type === "gumicsere"
-                ? "rgba(245,158,11,0.25)"
-                : r.type === "muszaki_vizsga"
-                ? "rgba(16,185,129,0.25)"
-                : "rgba(201,169,98,0.2)",
-            color:
-              r.type === "olajcsere"
-                ? "#60a5fa"
-                : r.type === "gumicsere"
-                ? "#fbbf24"
-                : r.type === "muszaki_vizsga"
-                ? "#10b981"
-                : "#C9A962",
-          }}
-        >
-          <TIcon className="w-[20px] h-[20px]" strokeWidth={2} />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#C9A962]">
-              {getServiceTypeLabel(r.type)}
-            </span>
-            {tone && (
-              <span
-                className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-[0.1em]"
-                style={
-                  tone === "critical"
-                    ? { backgroundColor: "rgba(244,63,94,0.18)", color: "#fb7185" }
-                    : tone === "warn"
-                    ? { backgroundColor: "rgba(245,158,11,0.18)", color: "#fbbf24" }
-                    : { backgroundColor: "rgba(16,185,129,0.16)", color: "#34d399" }
-                }
-              >
-                {days! < 0 ? `Lejárt ${-days!} napja` : `${days!} nap múlva`}
-              </span>
-            )}
-            {r.vehiclePlateNumber && (
-              <span className="text-[10px] font-bold tracking-wide text-[#F7F5F1]/50 inline-flex items-center gap-1">
-                <Hash className="w-[11px] h-[11px]" strokeWidth={2.5} />
-                {r.vehiclePlateNumber}
-              </span>
-            )}
-          </div>
-
-          <h3 className="mt-1 text-[14.5px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] leading-tight tracking-tight truncate">
-            {r.title}
-          </h3>
-          {r.vehicleName && (
-            <div className="text-[11.5px] text-[#F7F5F1]/55 font-semibold truncate mt-0.5">
-              {r.vehicleName}
-            </div>
-          )}
-
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#F7F5F1]/60">
-              <Calendar className="w-[12px] h-[12px]" strokeWidth={2.2} />
-              {formatDate(r.date)}
-            </div>
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#F7F5F1]/60">
-              <Gauge className="w-[12px] h-[12px]" strokeWidth={2.2} />
-              {kmNumber(r.mileageKm)}
-            </div>
-            {r.costHUF != null && (
-              <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#C9A962]/90">
-                {huf(r.costHUF)}
-              </div>
-            )}
-            {r.nextCheckDate && (
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#F7F5F1]/60">
-                <Clock className="w-[12px] h-[12px]" strokeWidth={2.2} />
-                Következő: {formatDate(r.nextCheckDate)}
-              </div>
-            )}
-          </div>
-
-          {r.servicePartner && (
-            <div className="mt-1.5 text-[10.5px] text-[#F7F5F1]/45 font-medium truncate">
-              Partner: <span className="font-semibold text-[#F7F5F1]/65">{r.servicePartner}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex flex-col items-stretch gap-1 shrink-0">
-          <button
-            onClick={onEdit}
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-[#C9A962]/85 hover:text-[#C9A962] hover:bg-[#C9A962]/10 border border-[#C9A962]/10 transition-all active:scale-[0.95]"
-            style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-          >
-            <Pencil className="w-[15px] h-[15px]" strokeWidth={2} />
-          </button>
-          <button
-            onClick={onDelete}
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-[#fb7185]/90 hover:text-[#f43f5e] hover:bg-[rgba(244,63,94,0.1)] border border-[rgba(244,63,94,0.18)] transition-all active:scale-[0.95]"
-            style={{ backgroundColor: "rgba(26,45,68,0.5)" }}
-          >
-            <Trash2 className="w-[15px] h-[15px]" strokeWidth={2} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyStateService({ onAdd, tab }: { onAdd: () => void; tab: Tab }) {
-  const text =
-    tab === "oil"
-      ? { title: "Még nincs olajcsere rekord", sub: "Kezdd az első rögzítéssel az alábbi gombbal", cta: "Olajcsere rögzítése", icon: Droplets }
-      : tab === "tires"
-      ? { title: "Még nincs gumicsere rekord", sub: "Kezdd az első rögzítéssel az alábbi gombbal", cta: "Gumicsere rögzítése", icon: CircleDot }
-      : { title: "Még nincs szerviz rekord", sub: "Kezdd az első rögzítéssel az alábbi gombbal", cta: "Szerviz rögzítése", icon: Wrench };
-  const Icon = text.icon;
-  return (
-    <div className="py-16 px-5 text-center card-glass rounded-3xl border-dashed">
-      <div
-        className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-5 border"
-        style={{
-          backgroundColor: "rgba(201,169,98,0.1)",
-          borderColor: "rgba(201,169,98,0.2)",
-          color: "#C9A962",
-        }}
-      >
-        <Icon className="w-7 h-7" strokeWidth={1.7} />
-      </div>
-      <h3 className="text-[17px] font-[family-name:var(--font-serif)] font-bold text-[#F7F5F1] mb-2">
-        {text.title}
-      </h3>
-      <p className="text-[13px] font-medium text-[#F7F5F1]/50 mb-6">{text.sub}</p>
-      <button
-        onClick={onAdd}
-        className="px-5 py-3.5 rounded-2xl text-[12px] font-black uppercase tracking-[0.18em] flex items-center gap-2 mx-auto transition-all active:scale-[0.98]"
-        style={{
-          background: "linear-gradient(135deg, #C9A962 0%, #d4bb7a 100%)",
-          color: "#0B1A2A",
-          boxShadow: "0 10px 26px -8px rgba(201,169,98,0.55)",
-        }}
-      >
-        <Plus className="w-[16px] h-[16px]" strokeWidth={2.4} />
-        {text.cta}
-      </button>
     </div>
   );
 }
