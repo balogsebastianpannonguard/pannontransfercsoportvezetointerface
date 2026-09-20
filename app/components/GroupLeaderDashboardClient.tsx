@@ -284,9 +284,10 @@ export default function GroupLeaderDashboardClient() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Auto-refresh every 60 seconds
+  // A sofőrök indítása és lezárása ugyanazt a közös járműállapotot frissíti.
+  // Rövid pollinggal a csoportvezetői felület is gyorsan követi ezeket.
   useEffect(() => {
-    const t = setInterval(() => { void fetchAll(true); }, 60000);
+    const t = setInterval(() => { void fetchAll(true); }, 15000);
     return () => clearInterval(t);
   }, [fetchAll]);
 
@@ -316,7 +317,8 @@ export default function GroupLeaderDashboardClient() {
       showToast(true, patch.status === "on_route" ? "Útra küldve" : "Parkoltba helyezve");
       return true;
     }
-    showToast(false, "Mentési hiba");
+    const data = await res.json().catch(() => ({}));
+    showToast(false, data?.error || "Mentési hiba");
     return false;
   };
 

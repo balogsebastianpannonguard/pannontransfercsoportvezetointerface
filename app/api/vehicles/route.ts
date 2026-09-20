@@ -11,6 +11,7 @@ import {
   type VehicleStatus,
 } from "@/lib/vehicles";
 import { ObjectId } from "mongodb";
+import { getMongoDb } from "@/lib/mongodb";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,25 @@ export async function PATCH(req: Request) {
     if (body.status !== undefined) patch.status = body.status as VehicleStatus;
     if (body.condition !== undefined) patch.condition = body.condition as VehicleCondition;
     if (body.note !== undefined) patch.note = body.note ? String(body.note).trim() : undefined;
+
+    if (patch.status === "parked") {
+      const db = await getMongoDb();
+      const activeTrip = await db.collection("bookings").findOne({
+        assignedVehicleId: body.id,
+        status: "in-progress",
+      });
+      if (activeTrip) {
+        return NextResponse.json(
+          { error: "A jármű folyamatban lévő úton van, ezért nem állítható parkolóba." },
+          { status: 409 }
+        );
+      }
+    }
+
+    if (patch.condition === "not_working") {
+      patch.status = "parked";
+    }
+
     const ok = await updateVehicle(body.id, patch);
     return NextResponse.json({ ok });
   } catch (e: any) {
