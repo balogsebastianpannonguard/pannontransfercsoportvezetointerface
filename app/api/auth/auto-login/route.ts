@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   // Örökre bejelentkezve marad (10 év) — nem kell újra megadnia az adatait.
   const FOREVER_SECONDS = 60 * 60 * 24 * 365 * 10;
   const user = await getGroupLeaderProfile();
-  const sessionToken = createSessionToken(user, true, `${FOREVER_SECONDS}s`);
+  const sessionToken = createSessionToken(user, true, FOREVER_SECONDS);
   await setSessionCookie(sessionToken, true, FOREVER_SECONDS);
 
   return NextResponse.redirect(new URL("/", request.url));

@@ -146,9 +146,9 @@ export async function getGroupLeaderProfile(user?: GroupLeaderUser): Promise<Gro
 export function createSessionToken(
   user: GroupLeaderUser,
   remember: boolean = true,
-  expiresInOverride?: string
+  expiresInOverride?: number
 ): string {
-  const expiresIn = expiresInOverride ?? (remember ? "7d" : "1d");
+  const expiresIn = expiresInOverride ?? (remember ? 60 * 60 * 24 * 7 : 60 * 60 * 24 * 1);
   return jwt.sign(user as object, GROUPLEADER_COOKIE_SECRET, { expiresIn });
 }
 
