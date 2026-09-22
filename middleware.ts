@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const AUTH_COOKIE_NAME = "pannon_groupleader_session";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/session", "/api/auth/logout", "/_next", "/favicon.ico", "/public"];
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/auto-login", "/api/auth/session", "/api/auth/logout", "/_next", "/favicon.ico", "/public"];
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|public).*)"],
