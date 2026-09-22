@@ -143,8 +143,12 @@ export async function getGroupLeaderProfile(user?: GroupLeaderUser): Promise<Gro
   };
 }
 
-export function createSessionToken(user: GroupLeaderUser, remember: boolean = true): string {
-  const expiresIn = remember ? "7d" : "1d";
+export function createSessionToken(
+  user: GroupLeaderUser,
+  remember: boolean = true,
+  expiresInOverride?: string
+): string {
+  const expiresIn = expiresInOverride ?? (remember ? "7d" : "1d");
   return jwt.sign(user as object, GROUPLEADER_COOKIE_SECRET, { expiresIn });
 }
 
@@ -156,9 +160,13 @@ export function verifySessionToken(token: string): GroupLeaderUser | null {
   }
 }
 
-export async function setSessionCookie(token: string, remember: boolean = true) {
+export async function setSessionCookie(
+  token: string,
+  remember: boolean = true,
+  maxAgeOverride?: number
+) {
   const cookieStore = await cookies();
-  const maxAge = remember ? 60 * 60 * 24 * 7 : 60 * 60 * 24 * 1;
+  const maxAge = maxAgeOverride ?? (remember ? 60 * 60 * 24 * 7 : 60 * 60 * 24 * 1);
   cookieStore.set(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
